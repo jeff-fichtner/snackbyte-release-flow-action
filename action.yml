@@ -20,10 +20,18 @@ inputs:
     default: "./environments.json"
   major-minor:
     description: >-
-      Override for the MAJOR.MINOR version line. When empty, the Action reads package.json's
-      version and uses its first two components.
+      Override for the MAJOR.MINOR version line (build-id strategy only). When empty, the Action
+      reads package.json's version and uses its first two components. Ignored when
+      version-strategy is package-json.
     required: false
     default: ""
+  version-strategy:
+    description: >-
+      How the version number is chosen. 'build-id' (default) = global monotonic, tree-reused PATCH,
+      for deployable apps. 'package-json' = tag the package.json version verbatim, for published
+      libraries (intentional SemVer).
+    required: false
+    default: "build-id"
 
 outputs:
   is-env:
@@ -53,4 +61,5 @@ runs:
       env:
         MANIFEST: ${{ inputs.manifest }}
         MAJOR_MINOR: ${{ inputs.major-minor }}
+        VERSION_STRATEGY: ${{ inputs.version-strategy }}
       run: bash "$GITHUB_ACTION_PATH/scripts/derive-version.sh" "${{ inputs.branch }}"

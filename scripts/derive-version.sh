@@ -35,6 +35,18 @@ set -euo pipefail
 
 BRANCH="${1:-${GITHUB_REF_NAME:-}}"
 MANIFEST="${MANIFEST:-./environments.json}"
+VERSION_STRATEGY="${VERSION_STRATEGY:-build-id}"
+
+# Validate the strategy FIRST — before any resolve/guard work — so a bad input (a typo) is rejected
+# immediately rather than after side-effect-free-but-wasteful checks (and so a shallow clone can't
+# mask the real error). The strategy only affects how the version NUMBER is chosen further down.
+case "$VERSION_STRATEGY" in
+  build-id|package-json) ;;
+  *)
+    echo "Unknown version-strategy '${VERSION_STRATEGY}' — expected 'build-id' or 'package-json'." >&2
+    exit 1
+    ;;
+esac
 
 # Resolve the pushing branch's environment from the manifest. An unknown branch cannot be
 # tagged (we wouldn't know which suffix to stamp) — fail loudly. node -p prints the suffix, or
@@ -70,42 +82,62 @@ if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
   exit 1
 fi
 
-# MAJOR.MINOR from the MAJOR_MINOR override, else from package.json; the patch field is ignored.
-MM="${MAJOR_MINOR:-$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')")}"
-MME="${MM//./\\.}" # regex-escape the dots for anchored matching
+# --- Version strategy ---------------------------------------------------------------------------
+# How the version NUMBER is chosen. Everything else (resolve-env, the guards above, tag-only, the
+# collision guard and push below) is shared and strategy-independent.
+#   build-id     (default) — the global monotonic, tree-reused PATCH. For deployable APPS: the
+#                            number is a build-artifact identity, and dev->main promotion reuses it.
+#   package-json           — tag the package.json `version` VERBATIM. For published LIBRARIES: the
+#                            number is intentional SemVer (a human promise to consumers), so the
+#                            tooling must not invent it. No reuse, no max+1.
+# (VERSION_STRATEGY was read and validated at the top of the script.)
+case "$VERSION_STRATEGY" in
+  package-json)
+    # The version IS whatever package.json declares — verbatim, prerelease and all. major-minor is a
+    # build-id concept and is intentionally ignored here (documented in the I/O contract).
+    version="$(node -p "require('./package.json').version")"
+    ;;
 
-# The read-back parser is generated from the tag-format parts (prefix 'v', then MM., then the
-# integer patch, then ANY suffix or none). One regex serves both reuse and mint — it is
-# suffix-agnostic by construction, so it never needs to know which environments exist.
-patch_re="^v${MME}\.([0-9]+)(-[A-Za-z0-9._-]+)?\$"
+  build-id)
+    # MAJOR.MINOR from the MAJOR_MINOR override, else from package.json; the patch field is ignored.
+    MM="${MAJOR_MINOR:-$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')")}"
+    MME="${MM//./\\.}" # regex-escape the dots for anchored matching
 
-# Step 1 — reuse: if any number is already tagged on a commit carrying THIS exact source tree
-# (any suffix), take it. The reuse key is the tree hash, not the commit SHA, so a promotion that
-# rewrites the commit but not the content — a merge commit, a squash, or a rebase that stays
-# clean — still reuses the dev number. (A fast-forward is the special case where the SHA is also
-# unchanged.) A rebase that absorbs divergent main changes yields a DIFFERENT tree and correctly
-# mints a new number. We scan every vMM.* tag, resolve each to its tree, and keep the numbers
-# whose tree matches HEAD's; the highest such number wins (matching the old --points-at tie-break).
-HEAD_TREE="$(git rev-parse "HEAD^{tree}")"
-patch="$(
-  git tag -l "v${MM}.*" | while IFS= read -r t; do
-    n="$(printf '%s\n' "$t" | sed -nE "s/${patch_re}/\1/p")"
-    if [ -n "$n" ]; then
-      # A tag may point at a tag object (annotated) or a commit; ^{tree} resolves both to the tree.
-      if [ "$(git rev-parse "${t}^{tree}" 2>/dev/null)" = "$HEAD_TREE" ]; then
-        printf '%s\n' "$n"
-      fi
+    # The read-back parser is generated from the tag-format parts (prefix 'v', then MM., then the
+    # integer patch, then ANY suffix or none). One regex serves both reuse and mint — it is
+    # suffix-agnostic by construction, so it never needs to know which environments exist.
+    patch_re="^v${MME}\.([0-9]+)(-[A-Za-z0-9._-]+)?\$"
+
+    # Step 1 — reuse: if any number is already tagged on a commit carrying THIS exact source tree
+    # (any suffix), take it. The reuse key is the tree hash, not the commit SHA, so a promotion that
+    # rewrites the commit but not the content — a merge commit, a squash, or a rebase that stays
+    # clean — still reuses the dev number. (A fast-forward is the special case where the SHA is also
+    # unchanged.) A rebase that absorbs divergent main changes yields a DIFFERENT tree and correctly
+    # mints a new number. We scan every vMM.* tag, resolve each to its tree, and keep the numbers
+    # whose tree matches HEAD's; the highest such number wins (matching the old --points-at tie-break).
+    HEAD_TREE="$(git rev-parse "HEAD^{tree}")"
+    patch="$(
+      git tag -l "v${MM}.*" | while IFS= read -r t; do
+        n="$(printf '%s\n' "$t" | sed -nE "s/${patch_re}/\1/p")"
+        if [ -n "$n" ]; then
+          # A tag may point at a tag object (annotated) or a commit; ^{tree} resolves both to the tree.
+          if [ "$(git rev-parse "${t}^{tree}" 2>/dev/null)" = "$HEAD_TREE" ]; then
+            printf '%s\n' "$n"
+          fi
+        fi
+      done | sort -n | tail -1
+    )"
+
+    # Step 2 — otherwise advance to the global max patch + 1 (empty set => -1 => 0 => first tag).
+    if [ -z "$patch" ]; then
+      max="$(git tag -l "v${MM}.*" | sed -nE "s/${patch_re}/\1/p" | sort -n | tail -1)"
+      patch="$(( ${max:--1} + 1 ))"
     fi
-  done | sort -n | tail -1
-)"
 
-# Step 2 — otherwise advance to the global max patch + 1 (empty set => -1 => 0 => first tag).
-if [ -z "$patch" ]; then
-  max="$(git tag -l "v${MM}.*" | sed -nE "s/${patch_re}/\1/p" | sort -n | tail -1)"
-  patch="$(( ${max:--1} + 1 ))"
-fi
+    version="${MM}.${patch}"
+    ;;
+esac
 
-version="${MM}.${patch}"
 tag="v${version}${suffix}"
 
 # Never overwrite or silently reuse a tag. If the target already exists this is a re-run or a

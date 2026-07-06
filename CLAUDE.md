@@ -16,8 +16,17 @@ MAJOR.MINOR are inputs; algorithm unchanged — Constitution VII). Spec/plan/tas
 and the Action's own moving-`v1` release workflow.
 
 - Logic: `scripts/derive-version.sh` (derive-version), `scripts/resolve-env.sh` (resolve-env)
-- Interface: `action.yml` (composite; inputs `branch`/`manifest`/`major-minor`, outputs `is-env`/`version`/`tag`)
+- Interface: `action.yml` (composite; inputs `branch`/`manifest`/`major-minor`/`version-strategy`, outputs `is-env`/`version`/`tag`)
 - Tests: `scripts/*.test.sh`, run via `npm run test:release`; CI in `.github/workflows/test.yml`
+- Consumer wiring: `CONSUMING.md` (app + library recipes, copy-paste)
+
+**Version strategy (feature 002).** `version-strategy` input selects how the version NUMBER is
+chosen; resolve-env/manifest/tag-only/guards are shared and strategy-independent:
+- `build-id` (default) — global monotonic, tree-reused PATCH. For deployable **apps** (this repo
+  self-versions with it).
+- `package-json` — tag `package.json`'s version verbatim. For published **libraries** (intentional
+  SemVer; a build counter can't be a compatibility promise). The existing-tag guard doubles as the
+  "bump package.json before re-releasing" rule.
 
 ## Extraction source
 

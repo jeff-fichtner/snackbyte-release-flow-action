@@ -1,6 +1,6 @@
 # Feature Specification: Marketplace publish + the Action's own release channel
 
-**Feature Branch**: `002-marketplace-release` (not created yet)
+**Feature Branch**: `003-marketplace-release` (not created yet)
 
 **Created**: 2026-07-06
 

@@ -33,9 +33,40 @@ if so, derives and pushes its version **tag only** — never a commit.
 To push the tag, the job needs `permissions: contents: write`.
 
 **Inputs**: `branch` (default `github.ref_name`), `manifest` (default `./environments.json`),
-`major-minor` (default: read `package.json`). **Outputs**: `is-env` (`"true"`/`"false"`),
-`version` (`MM.P`, env pushes only), `tag` (`vMM.P<suffix>`, env pushes only). Full contract:
+`major-minor` (default: read `package.json`), `version-strategy` (default `build-id`).
+**Outputs**: `is-env` (`"true"`/`"false"`), `version` (env pushes only), `tag` (env pushes only).
+Full contract:
 [`specs/001-extract-release-flow/contracts/action-io.md`](specs/001-extract-release-flow/contracts/action-io.md).
+
+### Version strategy — apps vs. libraries
+
+The `version-strategy` input selects how the version *number* is chosen. Everything else
+(resolve-env, the manifest, tag-only, every guard) is identical either way.
+
+| | `build-id` (default) | `package-json` |
+|---|---|---|
+| **Version comes from** | derived from git tags (global monotonic, tree-reused PATCH) | `package.json`'s `version`, verbatim |
+| **Number chosen by** | the tooling (automatic) | a human (you edit `package.json`) |
+| **`v1.4.7` means** | "build #7 on the 1.4 line" | "you deliberately released 1.4.7" |
+| **Use for** | **deployable apps** (artifact identity; dev→main promotion reuses the number) | **published libraries** (intentional SemVer — a compatibility promise consumers rely on) |
+
+A deployable app keeps the default. A library **must** set `version-strategy: package-json` — a
+published package's version is an API-compatibility promise, and a build counter can't make that
+promise. Under `package-json`, an already-existing target tag fails loudly: that *is* the "bump
+`package.json` before releasing again" discipline. See
+[`CONSUMING.md`](CONSUMING.md) for full wiring (both an app and a library, copy-paste).
+
+```yaml
+# Library release: intentional SemVer + publish on the tag
+- uses: actions/checkout@v5
+  with: { fetch-depth: 0 }
+- id: release
+  uses: jeff-fichtner/snackbyte-release-flow-action@v1
+  with:
+    version-strategy: package-json
+- if: steps.release.outputs.is-env == 'true'
+  run: npm publish   # publishes package.json's version; the tag marks the release
+```
 
 **Tests**: `npm run test:release` runs the behavior-complete matrix (B1–B15), the
 parameterization deltas (P3–P5), resolve-env (P1–P2), the one-row-edit proof, and the

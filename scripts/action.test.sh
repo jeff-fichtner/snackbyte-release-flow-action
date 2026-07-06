@@ -40,6 +40,8 @@ read_action() {
       manifestMappedResolve: has(/id:\s*resolve[\s\S]*?MANIFEST:\s*\$\{\{\s*inputs\.manifest/),
       manifestMappedDerive:  has(/id:\s*derive[\s\S]*?MANIFEST:\s*\$\{\{\s*inputs\.manifest/),
       mmMappedDerive:        has(/MAJOR_MINOR:\s*\$\{\{\s*inputs\.major-minor/),
+      strategyMappedDerive:  has(/VERSION_STRATEGY:\s*\$\{\{\s*inputs\.version-strategy/),
+      strategyInputDefault:  has(/version-strategy:[\s\S]*?default:\s*"build-id"/),
       outIsEnv:  has(/is-env:[\s\S]*?steps\.resolve\.outputs\.is-env/),
       outVersion:has(/version:[\s\S]*?steps\.derive\.outputs\.version/),
       outTag:    has(/tag:[\s\S]*?steps\.derive\.outputs\.tag/),
@@ -59,6 +61,8 @@ assert "wire: derive runs script"      "true" "$(jq_get deriveRunsDerive)"
 assert "wire: manifest->resolve env"   "true" "$(jq_get manifestMappedResolve)"
 assert "wire: manifest->derive env"    "true" "$(jq_get manifestMappedDerive)"
 assert "wire: major-minor->derive env" "true" "$(jq_get mmMappedDerive)"
+assert "wire: version-strategy->derive" "true" "$(jq_get strategyMappedDerive)"
+assert "wire: strategy default build-id" "true" "$(jq_get strategyInputDefault)"
 assert "wire: output is-env"           "true" "$(jq_get outIsEnv)"
 assert "wire: output version"          "true" "$(jq_get outVersion)"
 assert "wire: output tag"              "true" "$(jq_get outTag)"

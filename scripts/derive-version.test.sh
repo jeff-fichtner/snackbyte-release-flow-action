@@ -246,6 +246,61 @@ W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
 W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
   assert P5 "v${PKG_MM}.0" "$(derive main)" )
 
+# ------------------------------------------------------------------------------------------------
+# Version-strategy rows (feature 002) — package-json strategy + default + invalid guard.
+# See specs/002-version-strategy/contracts/versioning.md.
+# ------------------------------------------------------------------------------------------------
+
+# set_pkg <version> -> rewrite package.json's version in the cwd and commit (a real maintainer bump)
+set_pkg() { node -e '
+  const fs=require("fs"); const p=JSON.parse(fs.readFileSync("package.json","utf8"));
+  p.version=process.argv[1]; fs.writeFileSync("package.json", JSON.stringify(p)+"\n");
+' "$1"; git add package.json; git commit -q -m "set version $1"; }
+export -f set_pkg
+
+# BD-default — no strategy input defaults to build-id (identical result to explicit build-id).
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  git tag -a "v${PKG_MM}.0" -m x; commit
+  d1="$(derive main)"                              # no strategy
+  git tag -d "v${PKG_MM}.1" >/dev/null 2>&1        # undo so the explicit run sees the same state
+  git push -q origin ":refs/tags/v${PKG_MM}.1" >/dev/null 2>&1 || true
+  d2="$(derive main VERSION_STRATEGY=build-id)"    # explicit build-id
+  assert BDdef "$d1" "$d2" )
+
+# S1 — package-json, default channel: tag the declared SemVer verbatim -> v1.4.0
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0
+  assert S1 "v1.4.0" "$(derive main VERSION_STRATEGY=package-json)" )
+
+# S2 — package-json, suffixed channel (A/-a) -> v1.4.0-a
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q -b aaa; set_pkg 1.4.0
+  assert S2 "v1.4.0-a" "$(derive aaa VERSION_STRATEGY=package-json)" )
+
+# S3 — package-json IGNORES existing build-id tags (no max+1): pkg 2.0.0 with v0.1.* tags -> v2.0.0
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  git tag -a "v${PKG_MM}.0" -m x; git tag -a "v${PKG_MM}.9" -m x; set_pkg 2.0.0
+  assert S3 "v2.0.0" "$(derive main VERSION_STRATEGY=package-json)" )
+
+# S4 — package-json collision guard = "bump package.json" discipline: v1.4.0 exists -> FAIL
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0
+  git tag -a "v1.4.0" -m x
+  assert S4 "FAIL" "$(derive main VERSION_STRATEGY=package-json)" )
+
+# S5 — package-json tags a PRERELEASE version verbatim -> v1.4.0-rc.1
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0-rc.1
+  assert S5 "v1.4.0-rc.1" "$(derive main VERSION_STRATEGY=package-json)" )
+
+# S6 — package-json IGNORES the MAJOR_MINOR input (build-id concept) -> still v1.4.0
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0
+  assert S6 "v1.4.0" "$(derive main VERSION_STRATEGY=package-json MAJOR_MINOR=9.9)" )
+
+# S7 — package-json still refuses an unknown branch (resolve-env is shared) -> FAIL
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q -b feature-x; set_pkg 1.4.0
+  assert S7 "FAIL" "$(derive feature-x VERSION_STRATEGY=package-json)" )
+
+# X1 — an unrecognized strategy fails loud, no tag.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  assert X1 "FAIL" "$(derive main VERSION_STRATEGY=bogus)" )
+
 echo ""
 P="$(wc -l < "$PASS_F" | tr -d ' ')"; F="$(wc -l < "$FAIL_F" | tr -d ' ')"
 echo "PASS=${P} FAIL=${F}"
