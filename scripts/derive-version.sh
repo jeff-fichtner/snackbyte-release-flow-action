@@ -116,6 +116,17 @@ if git rev-parse "$tag" >/dev/null 2>&1; then
   exit 1
 fi
 
+# An annotated tag records a tagger identity. A fresh CI runner has no git identity configured,
+# which would make `git tag -a` fail with "Committer identity unknown". As a reusable Action we
+# must not require the consumer to set this up, so fall back to the GitHub Actions bot identity
+# for THIS invocation (env-scoped, never written to global config) when none is present.
+if ! git config user.email >/dev/null 2>&1; then
+  export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-github-actions[bot]}"
+  export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
+  export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-$GIT_AUTHOR_NAME}"
+  export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
+fi
+
 git tag -a "$tag" -m "Release ${tag}"
 git push origin "$tag" # push the TAG only — never a commit, never a branch
 

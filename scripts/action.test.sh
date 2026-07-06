@@ -116,6 +116,33 @@ assert "I1/INV-1 exactly one new tag"  "1" "$(( tags_after - tags_before ))"
 assert "I1/INV-1 zero new commits"     "$commits_before" "$commits_after"
 assert "I1/INV-1 branch head unchanged" "$head_before" "$head_after"
 
+# I1b — REGRESSION (identity-less runner): a fresh CI runner has no git user.name/email. The
+#   Action must still create the annotated tag (it falls back to the github-actions[bot] identity)
+#   rather than dying with "Committer identity unknown". We suppress global+system git config to
+#   mimic the runner, seed with an env-scoped identity, then invoke with NOTHING configured.
+Wi="$(
+  root="$(mktemp -d)"; work="$root/work"
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null git init -q -b main --bare "$root/origin.git"
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null git init -q -b main "$work"
+  ( cd "$work"
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+    git remote add origin "$root/origin.git"
+    printf '{"name":"t","version":"0.1.0","private":true}\n' > package.json
+    printf '%s\n' '{ "environments": [ { "name":"P","branch":"main","tagSuffix":"" } ] }' > environments.json
+    GIT_AUTHOR_NAME=s GIT_AUTHOR_EMAIL=s@s GIT_COMMITTER_NAME=s GIT_COMMITTER_EMAIL=s@s git add -A
+    GIT_AUTHOR_NAME=s GIT_AUTHOR_EMAIL=s@s GIT_COMMITTER_NAME=s GIT_COMMITTER_EMAIL=s@s git commit -q -m init
+    GIT_AUTHOR_NAME=s GIT_AUTHOR_EMAIL=s@s GIT_COMMITTER_NAME=s GIT_COMMITTER_EMAIL=s@s git push -q origin main )
+  echo "$work"
+)"
+# derive with NO identity configured and global/system suppressed (the runner state)
+tag_ident="$(
+  cd "$Wi"; export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+  if GITHUB_OUTPUT=/dev/null bash "$ROOT/scripts/derive-version.sh" main >/dev/null 2>&1; then
+    git tag -l 'v0.1.0' | head -1
+  else echo "FAIL-no-identity"; fi
+)"
+assert "I1b identity-less tag created" "v0.1.0" "$tag_ident"
+
 # I2 — non-env push (feature-x): is-env=false, version/tag empty, NO tag created.
 W2="$(mk_repo)"
 tags_before2="$(git -C "$W2" tag | wc -l | tr -d ' ')"
