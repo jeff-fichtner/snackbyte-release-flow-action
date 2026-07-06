@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# Agent folder — commit skills, but never agent-local credentials/state
+# (Spec Kit warns that agents may store auth tokens under .claude/)
+.claude/settings.local.json
+.claude/*.local.json
+.claude/.credentials*
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Testing / coverage
+coverage/
+.vitest/
+
+# Editor / OS
+.DS_Store
+.idea/
+*.swp
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Caches
+.cache/
+.tmp/
+tmp/
+
+# Generated spec HTML views (source of truth is the .md)
+specs/**/*.html
