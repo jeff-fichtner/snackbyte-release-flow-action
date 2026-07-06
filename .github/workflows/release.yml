@@ -1,0 +1,43 @@
+name: release
+
+# This repo versions ITSELF with its own Action (dogfooding). On a push to an environment
+# branch (main -> production, dev -> staging, per environments.json), resolve the environment
+# and, if it is one, derive + push the version tag: vMAJOR.MINOR.PATCH<suffix>. Tag only —
+# never a commit or branch push. A push to any non-environment branch short-circuits.
+on:
+  push:
+    branches:
+      - main
+      - dev
+
+# Needed to push the derived tag.
+permissions:
+  contents: write
+
+# Serialize per branch so two pushes cannot race to the same build number.
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: derive + tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # full history + tags — the derivation refuses a shallow clone
+
+      - id: release
+        uses: ./ # this repo's own Action
+        # inputs default: branch=github.ref_name, manifest=./environments.json,
+        # major-minor read from package.json's version
+
+      - name: Report
+        run: |
+          echo "is-env=${{ steps.release.outputs.is-env }}"
+          if [ "${{ steps.release.outputs.is-env }}" = "true" ]; then
+            echo "Tagged ${{ steps.release.outputs.tag }} (version ${{ steps.release.outputs.version }})"
+          else
+            echo "Not an environment branch — nothing tagged."
+          fi

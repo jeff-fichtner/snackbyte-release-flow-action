@@ -16,12 +16,12 @@ jobs:
     name: release-flow test suite
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0 # full history + tags — the suite builds its own repos but this matches consumer guidance
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "24"
       - name: Run test:release
         run: npm run test:release
 
@@ -33,7 +33,7 @@ jobs:
     name: action.yml smoke (uses ./)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - name: Write a scratch 2-env manifest
