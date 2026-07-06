@@ -35,6 +35,29 @@ Plus the **one-row-edit proof** (`add-env.test.sh`): adding a `qa` row to the ma
 (a) touches only `environments.json`, (b) derives `vMM.0-qa` for the `qa` branch, and
 (c) resolve-env recognizes `qa` and rejects a non-environment branch.
 
+## Extraction-delta rows (behaviors 001 adds over the source)
+
+The rows above verify the *unchanged algorithm*. These verify the *new* behaviors this
+feature introduces (the parameterization surface) — the only place a port defect can live.
+Behavior-complete, not enumerative: one row per distinct new behavior.
+
+| Row | Behavior | Setup | Invocation | Expected |
+|---|---|---|---|---|
+| P1 | resolve-env standalone — is an environment | default manifest | check `main` | `is-env=true` |
+| P2 | resolve-env standalone — not an environment | default manifest | check `feature-x` | `is-env=false` |
+| P3 | manifest at a NON-default path derives identically | manifest at `config/envs.json`, no tags | derive P, `manifest=config/envs.json` | `vMM.0` (identical to B1) |
+| P4 | `major-minor` override drives the version line | override `major-minor=2.7`, no tags | derive P | `v2.7.0` |
+| P5 | default `major-minor` reads the declared version | no override, declared version `MM.x`, no tags | derive P | `vMM.0` |
+| I1 | Action interface end-to-end — env push | fixture manifest + version | invoke the Action for an env branch | outputs `is-env=true`, `version=MM.0`, `tag=vMM.0<suffix>` matching derivation |
+| I2 | Action interface end-to-end — non-env push | fixture manifest | invoke the Action for a non-env branch | output `is-env=false`; `version`/`tag` unset; no tag created |
+
+## CI gate
+
+The full suite (algorithm rows B1–B15 + one-row-edit proof + extraction-delta rows P1–P5,
+I1–I2) MUST run green in continuous integration on every push — `FAIL=0`, exit zero. A red
+suite blocks. This mirrors the source project's quality-gate principle that the test script
+MUST run successfully on a fresh copy.
+
 ## Invariants (must hold for every row)
 
 - **INV-1 (tag-only)**: a successful run adds exactly one tag, zero commits, zero branch
@@ -51,6 +74,7 @@ Plus the **one-row-edit proof** (`add-env.test.sh`): adding a `qa` row to the ma
 
 ## Acceptance
 
-The ported suite MUST pass all rows (B1–B15) and the add-env proof (SC-001, SC-003, SC-005).
-Any intended deviation from a source row is a documented amendment (Principle VII), recorded
-in [research.md](../research.md), not a silent change.
+The suite MUST pass all algorithm rows (B1–B15) and the add-env proof (SC-001, SC-003,
+SC-005), the extraction-delta rows P1–P5 and I1–I2 (SC-002, SC-006, SC-007), and MUST run
+green in CI on every push (SC-008). Any intended deviation from a source row is a documented
+amendment (Principle VII), recorded in [research.md](../research.md), not a silent change.

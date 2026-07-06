@@ -31,8 +31,13 @@ except `$GITHUB_OUTPUT`).
 
 **Testing**: Bash acceptance harness ported from `snackbyte-base/scripts/derive-version.test.sh`
 (rows B1–B15, self-contained throwaway-repo fixtures with a local bare origin) and
-`add-env.test.sh` (one-row-edit proof). Run via a single `test:release`-style entrypoint.
-Optionally a workflow-level smoke test that invokes the composite Action.
+`add-env.test.sh` (one-row-edit proof), **extended** with the extraction-delta coverage this
+feature's new surface requires (see [contracts/versioning.md](./contracts/versioning.md)):
+resolve-env standalone (P1–P2), non-default manifest path (P3), `major-minor` override/default
+(P4–P5), and an Action-interface end-to-end check (I1–I2) that invokes `action.yml` and asserts
+`is-env`/`version`/`tag`. Run via a single `test:release`-style entrypoint locally **and as a
+mandatory CI gate on every push** (mirrors the source's "test script MUST run successfully"
+quality-gate principle).
 
 **Target Platform**: GitHub Actions runners (ubuntu-latest primarily); the scripts are
 runner-agnostic bash+git+node and also run locally for the test harness.
@@ -94,12 +99,14 @@ action.yml                     # composite Action: inputs (branch, manifest, maj
 scripts/
 ├── derive-version.sh          # ported from snackbyte-base; reads inputs, not fixed files
 ├── resolve-env.sh             # the resolve-env check, extracted from the inline CI job
-├── derive-version.test.sh     # ported B1–B15 matrix (throwaway-repo fixtures)
+├── derive-version.test.sh     # ported B1–B15 matrix + extraction-delta rows P3–P5 (param surface)
+├── resolve-env.test.sh        # P1–P2: resolve-env standalone true/false
+├── action.test.sh             # I1–I2: invoke action.yml, assert is-env/version/tag end-to-end
 └── add-env.test.sh            # ported one-row-edit proof
-package.json                   # dev-only: the `test:release` entrypoint (NOT a publish manifest)
+package.json                   # dev-only: the `test:release` entrypoint chaining all suites (NOT a publish manifest)
 README.md                      # already present — usage + design rationale
 .github/workflows/
-└── test.yml                   # CI: run the release test suite (+ optional Action smoke test)
+└── test.yml                   # CI: run the full release test suite on every push (mandatory gate)
 ```
 
 **Structure Decision**: Single-project composite-Action layout. Scripts live at

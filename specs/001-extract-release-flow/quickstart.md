@@ -41,12 +41,34 @@ bash scripts/resolve-env.sh feature-x   # -> is-env=false
 
 **Expected**: exit status / printed `is-env` reflects manifest membership (SC-002).
 
-## Validate the composite Action (workflow smoke test)
+## Validate the parameterization surface (extraction deltas)
 
-A CI workflow (`.github/workflows/test.yml`) runs the suite on push. An optional job invokes
-the composite Action itself against a fixture manifest and asserts the `is-env`/`version`/`tag`
-outputs, proving the `action.yml` wiring (not just the scripts). Maps to SC-006 in a
-self-referential form; a true cross-repo consumer test is the end-to-end confirmation.
+The behaviors this feature adds over the source — the only place a port defect can hide — are
+covered by dedicated rows (P1–P5, I1–I2 in [contracts/versioning.md](./contracts/versioning.md)):
+
+```bash
+bash scripts/resolve-env.test.sh    # P1-P2: standalone true/false
+# P3-P5 (non-default manifest path, major-minor override/default) run inside:
+bash scripts/derive-version.test.sh
+```
+
+**Expected**: `FAIL=0`. Maps to SC-002 and SC-007.
+
+## Validate the composite Action end-to-end (required, not optional)
+
+```bash
+bash scripts/action.test.sh         # I1-I2: invoke action.yml, assert is-env/version/tag
+```
+
+Invokes the Action itself against a fixture manifest and asserts the `is-env`/`version`/`tag`
+outputs match the derivation — so a correct algorithm wired to a broken `action.yml` cannot
+pass. Maps to SC-006. A true cross-repo consumer invocation is the stronger confirmation; the
+same-repo invocation is the enforced gate.
+
+## The whole suite must be green in CI
+
+`.github/workflows/test.yml` runs the full suite (algorithm + extraction-delta + Action
+interface) on every push. A red suite blocks (SC-008) — "tests pass" is enforced, not local-only.
 
 ## Validate the one-row-edit promise directly
 
@@ -60,7 +82,10 @@ bash scripts/add-env.test.sh
 
 ## Definition of done for the feature
 
-- All rows in [contracts/versioning.md](./contracts/versioning.md) pass (`FAIL=0`).
-- `action.yml` exposes `is-env`, `version`, `tag` per [contracts/action-io.md](./contracts/action-io.md).
+- All rows in [contracts/versioning.md](./contracts/versioning.md) pass — algorithm B1–B15,
+  extraction-delta P1–P5 / I1–I2, and the add-env proof (`FAIL=0`).
+- `action.yml` exposes `is-env`, `version`, `tag` per [contracts/action-io.md](./contracts/action-io.md),
+  verified by an end-to-end Action invocation (I1–I2), not scripts-in-isolation alone.
 - A successful derive adds exactly one tag and zero commits/branches (INV-1).
 - Each fail-loud path exits non-zero and creates nothing (INV-5).
+- The full suite runs green in CI on every push (SC-008); a red suite blocks.

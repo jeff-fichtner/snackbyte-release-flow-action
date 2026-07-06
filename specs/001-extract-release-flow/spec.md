@@ -172,11 +172,30 @@ are returned to the consuming workflow without the consumer having copied any sc
   manifest, and the MAJOR.MINOR source — rather than requiring each consumer to vendor the
   logic. Behavior MUST match the extracted source exactly except where a change is a
   deliberate, documented decision (no incidental divergence).
-- **FR-011**: The extracted behavior MUST be covered by an executable acceptance suite that
-  exercises the full set of distinct derivation behaviors (mint, advance across mixed
-  suffixes, reuse-on-tree, promotion via merge/squash, collision guard, shallow refusal,
-  unknown-branch refusal, hotfix gaps, single-environment self-increment) and the
-  one-row-edit proof, and that suite MUST pass.
+- **FR-011**: The extracted behavior MUST be covered by an executable, **behavior-complete**
+  acceptance suite — sized by distinct behaviors of the derivation rule, not by enumerating
+  environments — that exercises the full set of distinct derivation behaviors (mint, advance
+  across mixed suffixes, reuse-on-tree, promotion via merge/squash, collision guard, shallow
+  refusal, unknown-branch refusal, hotfix gaps, single-environment self-increment) and the
+  one-row-edit proof, and that suite MUST pass. (Behavior-complete matrix — the same testing
+  principle as the source.)
+- **FR-012**: The suite MUST additionally cover the behaviors this feature **introduces** over
+  the source (the parameterization surface), because these are the only behaviors that changed
+  and therefore where a port defect would live:
+  - the environment-check as an independently invokable capability returning true for a
+    declared environment branch and false otherwise;
+  - the manifest supplied at a **non-default location** deriving identically to the default;
+  - the MAJOR.MINOR **override** input producing tags on that version line, and the default
+    (read from the repository's declared version) producing tags on the declared line.
+- **FR-013**: The shared unit's **own interface** MUST be verified end-to-end: invoking the
+  Action against a fixture and asserting its `is-env`, `version`, and `tag` results match the
+  derivation — so that a correct algorithm wired to a broken interface cannot pass. A
+  same-repository invocation satisfies this; a cross-repository consumer invocation is the
+  stronger confirmation.
+- **FR-014**: The acceptance suite MUST run successfully in the project's continuous
+  integration on every push — "the tests pass" is an enforced gate, not a local-only
+  aspiration. (Mirrors the source's "lint/format/type-check/test MUST run successfully"
+  quality-gate principle, scoped to this Action's test surface.)
 
 ### Key Entities *(include if feature involves data)*
 
@@ -208,9 +227,15 @@ are returned to the consuming workflow without the consumer having copied any sc
   commits and zero branch updates.
 - **SC-005**: Each fail-loud condition (existing target tag, shallow history, unknown branch)
   produces a non-zero result and creates no tag — verified for each condition.
-- **SC-006**: A consumer repository can obtain the environment-check result and the derived
-  version/tag by referencing the shared unit and supplying inputs, without copying any of the
-  flow's logic into the consumer — demonstrated once end-to-end.
+- **SC-006**: A consumer can obtain the environment-check result and the derived version/tag
+  by referencing the shared unit and supplying inputs, without copying any of the flow's logic
+  — verified by an end-to-end invocation of the shared unit that asserts its `is-env`,
+  `version`, and `tag` results (not merely by the scripts passing in isolation).
+- **SC-007**: The parameterization behaviors pass: a non-default manifest location derives the
+  identical tag to the default, and the MAJOR.MINOR override produces tags on the overridden
+  version line while the default reads the declared line — each verified by an acceptance case.
+- **SC-008**: The full acceptance suite runs green in continuous integration on every push
+  (exit zero, `FAIL=0`); a red suite blocks — verified by the CI run itself.
 
 ## Assumptions
 
