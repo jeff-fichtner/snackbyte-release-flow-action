@@ -1,0 +1,56 @@
+name: "Snackbyte Release Flow"
+description: >-
+  Turn an environments.json manifest into a release flow: resolve-env ("is this pushed branch a
+  deployable environment?") and derive-version ("what version tag does this push get?"). Creates a
+  tag only — never a commit or branch push.
+author: "Snackbyte"
+
+branding:
+  icon: "tag"
+  color: "purple"
+
+inputs:
+  branch:
+    description: "The pushed branch to resolve against the manifest."
+    required: false
+    default: ${{ github.ref_name }}
+  manifest:
+    description: "Path to the environments manifest (relative to the checkout)."
+    required: false
+    default: "./environments.json"
+  major-minor:
+    description: >-
+      Override for the MAJOR.MINOR version line. When empty, the Action reads package.json's
+      version and uses its first two components.
+    required: false
+    default: ""
+
+outputs:
+  is-env:
+    description: '"true" if the branch is a deployable environment, else "false".'
+    value: ${{ steps.resolve.outputs.is-env }}
+  version:
+    description: "The derived MM.P version (set only for an environment push)."
+    value: ${{ steps.derive.outputs.version }}
+  tag:
+    description: "The derived vMM.P<suffix> tag (set only for an environment push)."
+    value: ${{ steps.derive.outputs.tag }}
+
+runs:
+  using: "composite"
+  steps:
+    # 1. resolve-env — the short-circuit. Always runs; sets is-env.
+    - id: resolve
+      shell: bash
+      env:
+        MANIFEST: ${{ inputs.manifest }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/resolve-env.sh" "${{ inputs.branch }}"
+
+    # 2. derive-version — only for an environment push. Creates and pushes the tag; sets version/tag.
+    - id: derive
+      if: steps.resolve.outputs.is-env == 'true'
+      shell: bash
+      env:
+        MANIFEST: ${{ inputs.manifest }}
+        MAJOR_MINOR: ${{ inputs.major-minor }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/derive-version.sh" "${{ inputs.branch }}"

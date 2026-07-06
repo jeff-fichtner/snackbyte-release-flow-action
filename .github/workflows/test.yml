@@ -1,0 +1,72 @@
+name: test
+
+# The Action's own CI gate: the release-flow test suite MUST run green on every push and PR.
+# A red suite blocks (Constitution V "fail loud"; base Principle VII "test MUST run successfully").
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # 1. The bash acceptance suite: derivation matrix B1–B15 + extraction-delta P3–P5,
+  #    resolve-env P1–P2, one-row-edit proof, and the action.yml interface replay (I1–I2).
+  suite:
+    name: release-flow test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags — the suite builds its own repos but this matches consumer guidance
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run test:release
+        run: npm run test:release
+
+  # 2. True end-to-end: invoke the REAL composite Action via `uses: ./` inside GitHub Actions,
+  #    against a scratch manifest, and assert its outputs — proving the action.yml wiring works on
+  #    a real runner (not just the local interface replay). Uses a throwaway branch input so no tag
+  #    is pushed to this repo; asserts is-env for both an env and a non-env branch.
+  action-smoke:
+    name: action.yml smoke (uses ./)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Write a scratch 2-env manifest
+        run: |
+          cat > /tmp/envs.json <<'JSON'
+          { "environments": [
+            { "name":"production","branch":"main","isPublicFace":true,"noindex":false,"tagSuffix":"" },
+            { "name":"staging","branch":"dev","isPublicFace":false,"noindex":true,"tagSuffix":"-dev" }
+          ] }
+          JSON
+
+      # A NON-environment branch: is-env must be false; no derivation, no tag.
+      - id: nonenv
+        uses: ./
+        with:
+          branch: feature-does-not-exist
+          manifest: /tmp/envs.json
+      - name: Assert non-env short-circuit
+        run: |
+          echo "is-env=${{ steps.nonenv.outputs.is-env }}"
+          test "${{ steps.nonenv.outputs.is-env }}" = "false"
+          test -z "${{ steps.nonenv.outputs.tag }}"
+
+      # An environment branch: is-env must be true. (We do NOT push a tag here — this asserts the
+      # resolve gate/output wiring on a real runner; tag creation is covered by the interface test.)
+      - id: env
+        uses: ./
+        with:
+          branch: main
+          manifest: /tmp/envs.json
+          major-minor: "9.9" # scratch line so any tag would be v9.9.* and not collide with real tags
+        continue-on-error: true # the derive step may decline to push without write perms; is-env is the assertion
+      - name: Assert env recognized
+        run: |
+          echo "is-env=${{ steps.env.outputs.is-env }}"
+          test "${{ steps.env.outputs.is-env }}" = "true"

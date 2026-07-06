@@ -1,0 +1,11 @@
+{
+  "name": "snackbyte-release-flow-action",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dev harness for the manifest-driven release-flow GitHub Action. NOT an npm package — the distribution unit is action.yml (Constitution VI). This package.json exists only to run the bash test suite.",
+  "scripts": {
+    "test:release": "bash scripts/derive-version.test.sh && bash scripts/resolve-env.test.sh && bash scripts/add-env.test.sh && bash scripts/action.test.sh",
+    "test": "npm run test:release"
+  },
+  "license": "MIT"
+}

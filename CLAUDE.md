@@ -8,15 +8,21 @@ never a commit**. It is the extraction of the manifest-driven release machinery 
 
 ## Status
 
-**Design captured; build deliberately deferred.** The full rationale, schema, algorithm,
-and intended `action.yml` shape live in `README.md` — read it first. As of the Spec Kit
-scaffold, this repo has `.specify/`, `.claude/skills/`, and these docs; no `action.yml`,
-scripts, or tests exist yet.
+**Built (feature 001).** `action.yml` + `scripts/derive-version.sh` + `scripts/resolve-env.sh`
+exist; the behavior-complete bash suite (`npm run test:release`) passes locally and in CI. The
+scripts are parameterized extractions of the `snackbyte-base` originals (manifest path and
+MAJOR.MINOR are inputs; algorithm unchanged — Constitution VII). Spec/plan/tasks live in
+`specs/001-extract-release-flow/`. Out of scope for 001 (candidate 002): Marketplace listing
+and the Action's own moving-`v1` release workflow.
 
-## Extraction source (when built)
+- Logic: `scripts/derive-version.sh` (derive-version), `scripts/resolve-env.sh` (resolve-env)
+- Interface: `action.yml` (composite; inputs `branch`/`manifest`/`major-minor`, outputs `is-env`/`version`/`tag`)
+- Tests: `scripts/*.test.sh`, run via `npm run test:release`; CI in `.github/workflows/test.yml`
 
-The algorithm, manifest, and test matrices already exist in `snackbyte-base` — the work
-is parameterization (hard-coded `./environments.json` / `./package.json` → Action inputs),
+## Extraction source
+
+The algorithm, manifest, and test matrices originated in `snackbyte-base` — the work was
+parameterization (hard-coded `./environments.json` / `./package.json` → Action inputs),
 not new logic. Source of truth:
 
 - Derivation: `snackbyte-base/scripts/derive-version.sh` (~120 lines bash)

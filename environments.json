@@ -1,0 +1,19 @@
+{
+  "$comment": "The environments this repo deploys — the single source of truth for the release flow. This Action reads only `branch` (to resolve the environment) and `tagSuffix` (stamped on the derived tag); `name`/`isPublicFace`/`noindex` are consumed by the application, not the flow. Adding, removing, or changing an environment is a one-row edit here — nothing else in the release tooling changes. Two entries sharing a tagSuffix is allowed but warned (their tags become indistinguishable); a push to a branch not listed here is rejected by the derivation and short-circuited by resolve-env.",
+  "environments": [
+    {
+      "name": "production",
+      "branch": "main",
+      "isPublicFace": true,
+      "noindex": false,
+      "tagSuffix": ""
+    },
+    {
+      "name": "staging",
+      "branch": "dev",
+      "isPublicFace": false,
+      "noindex": true,
+      "tagSuffix": "-dev"
+    }
+  ]
+}

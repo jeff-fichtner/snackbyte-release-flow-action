@@ -1,14 +1,46 @@
 # snackbyte-release-flow-action
 
-> **Status: notes only.** This folder currently holds *only* this document. No
-> implementation exists yet — no `action.yml`, no scripts, no tests. This is the
-> captured rationale and plan, so the decision and the design aren't lost. Building
-> it is deliberately deferred.
+> **Status: built (feature 001).** The Action is implemented — `action.yml`, the two
+> bundled scripts (`scripts/derive-version.sh`, `scripts/resolve-env.sh`), and a
+> behavior-complete bash test suite (`npm run test:release`) all exist and pass. See
+> **Usage** below. The design rationale that follows is retained as the "why". Out of
+> scope for 001 (candidate 002): a Marketplace listing and the Action's own moving-`v1`
+> release workflow.
 >
 > **Naming note:** the idea started as "extract `derive-version`," but the reframe
 > below concluded the real unit is the manifest-driven **release flow** (resolve-env
 > + version derivation), of which derivation is one component — hence the name
 > `snackbyte-release-flow-action`.
+
+## Usage
+
+Add `environments.json` at your repo root (one row per environment), then call the
+Action from your workflow on push. It answers whether the branch is an environment and,
+if so, derives and pushes its version **tag only** — never a commit.
+
+```yaml
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0            # full history + tags — the derivation refuses a shallow clone
+- id: release
+  uses: jeff-fichtner/snackbyte-release-flow-action@v1
+  # inputs all default: branch=github.ref_name, manifest=./environments.json,
+  # major-minor read from package.json's version (first two components)
+- if: steps.release.outputs.is-env == 'true'
+  run: echo "Deploying ${{ steps.release.outputs.tag }} (version ${{ steps.release.outputs.version }})"
+```
+
+To push the tag, the job needs `permissions: contents: write`.
+
+**Inputs**: `branch` (default `github.ref_name`), `manifest` (default `./environments.json`),
+`major-minor` (default: read `package.json`). **Outputs**: `is-env` (`"true"`/`"false"`),
+`version` (`MM.P`, env pushes only), `tag` (`vMM.P<suffix>`, env pushes only). Full contract:
+[`specs/001-extract-release-flow/contracts/action-io.md`](specs/001-extract-release-flow/contracts/action-io.md).
+
+**Tests**: `npm run test:release` runs the behavior-complete matrix (B1–B15), the
+parameterization deltas (P3–P5), resolve-env (P1–P2), the one-row-edit proof, and the
+`action.yml` interface replay (I1–I2). CI runs the same suite plus a real `uses: ./` smoke
+test on every push.
 
 A **shareable GitHub Action** that turns a repo's `environments.json` manifest into
 its release flow: it answers *"is this pushed branch a deployable environment?"* and,
