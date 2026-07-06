@@ -7,27 +7,29 @@
 **Status**: STUB — deferred, not scheduled. Captured so the scope isn't lost; do not treat
 the sections below as complete or ratified. Expand with `/speckit-specify` when actually picked up.
 
-> **This is a placeholder.** Feature 001 (the built Action) explicitly scoped these items OUT.
-> They are the *delivery/distribution* mechanics that sit on top of the working Action, not the
-> release-flow logic itself. Realistically untouched for a long time.
+> **This is a placeholder.** These are the *delivery/distribution* mechanics that sit on top of the
+> Action — not the release-flow logic itself, which is shipped. Realistically untouched for a
+> long time.
 
-## Why this exists (the gap 001 left)
+## Why this exists (the remaining distribution gap)
 
-001 delivered a working, tested composite Action referenced by path (`uses: ./`) and by branch/SHA.
-Two distribution capabilities were deliberately deferred:
+The Action is built, tested, self-versioning, and consumable at a `@v1` alias. What remains is the
+distribution polish that sits on top of a working Action:
 
-1. **A stable, moving `v1` tag** so consumers can write `uses: jeff-fichtner/snackbyte-release-flow-action@v1`
-   and receive non-breaking improvements without editing their workflows. The 001 README already
-   *documents* `@v1`, but no `v1` tag exists — so that reference does not resolve yet.
+1. **Automated moving `v1` alias.** A `v1` tag exists (cut by hand) so `@v1` resolves today, but
+   nothing *re-points* it automatically on each release — moving `vMAJOR` forward on every new
+   `vMAJOR.MINOR.PATCH` is manual. This feature owns automating that (and the `v1`→`v2` bump policy
+   for a deliberate breaking change).
 2. **A GitHub Marketplace listing** so the Action is discoverable and installable like any published
    Action (the "VS Code extension → Marketplace" half of the mental model in the root README).
+3. **Inline-JSON manifest form** — the `manifest` input accepts a path; accepting inline JSON is a
+   deferred convenience noted in 001's research.
 
-## Partial progress already landed (outside this feature)
+## Context
 
-- The repo now **versions itself** with its own Action (`.github/workflows/release.yml`): a push to
-  an environment branch derives and pushes `vMM.P<suffix>`. This produces the *point* release tags
-  (`v0.1.0`, `v0.1.1`, …) — but NOT a **moving `v1`** alias, which is what consumers pin to. Moving
-  the `v1`/`vMAJOR` alias forward on each release is the missing piece this feature owns.
+The repo versions itself with its own Action (`.github/workflows/release.yml`, `build-id`),
+producing point releases (`v0.1.0`, `v0.2.1`, …). The `v1` alias is maintained by hand until the
+automation in item 1 lands.
 
 ## Candidate scope (to be refined when picked up)
 

@@ -1,16 +1,15 @@
 # snackbyte-release-flow-action
 
-> **Status: built (feature 001).** The Action is implemented — `action.yml`, the two
-> bundled scripts (`scripts/derive-version.sh`, `scripts/resolve-env.sh`), and a
-> behavior-complete bash test suite (`npm run test:release`) all exist and pass. See
-> **Usage** below. The design rationale that follows is retained as the "why". Out of
-> scope for 001 (candidate 002): a Marketplace listing and the Action's own moving-`v1`
-> release workflow.
+> A composite GitHub Action — `action.yml` plus two bundled bash scripts
+> (`scripts/derive-version.sh`, `scripts/resolve-env.sh`), covered by a behavior-complete
+> suite (`npm run test:release`). Consume it at `@v1`; see **Usage** and
+> [`CONSUMING.md`](CONSUMING.md). It supports two version strategies: `build-id` for
+> deployable apps (default) and `package-json` for published libraries. The rationale below
+> is the "why".
 >
-> **Naming note:** the idea started as "extract `derive-version`," but the reframe
-> below concluded the real unit is the manifest-driven **release flow** (resolve-env
-> + version derivation), of which derivation is one component — hence the name
-> `snackbyte-release-flow-action`.
+> **Naming note:** the idea started as "extract `derive-version`," but the real unit is the
+> manifest-driven **release flow** (resolve-env + version derivation), of which derivation is
+> one component — hence `snackbyte-release-flow-action`.
 
 ## Usage
 
@@ -211,27 +210,6 @@ same-branch run serialization.
   invariants) and `specs/003-env-manifest/contracts/versioning.md`
 - **Typed reader (reference, don't extract):** `src/environments.ts`
 
-## Intended shape (deferred — NOT built)
-
-When actually built, the work is small — the algorithm, the manifest, and the test
-matrices are done. The only real change is **parameterization**: the machinery
-currently hard-`require`s `./environments.json` and `./package.json`; those become
-Action inputs.
-
-- **`action.yml`** — a composite Action declaring:
-  - `inputs.branch` — the pushed branch (default `github.ref_name`).
-  - `inputs.manifest` — path to `environments.json` (default `./environments.json`),
-    or the manifest JSON inline — decoupling the logic from the fixed filename.
-  - `inputs.major-minor` — replaces the `package.json` read (default: read `package.json`).
-  - `outputs.is-env` — the resolve-env short-circuit result.
-  - `outputs.version` (`MM.P`) and `outputs.tag` (`vMM.P<suffix>`).
-- **`derive-version.sh`** — extracted, sourcing `MM`/`suffix` from inputs, no algorithm
-  change.
-- **Test matrices** — extracted; they already accept `PKG_MM` and an injectable manifest
-  via env, so they port with minimal edits.
-- **Action's own versioning** — its own semver + a moving `v1` tag; a Marketplace listing
-  if/when published.
-
 ## Related reusable patterns (observed, NOT extracted here)
 
 These surfaced in the same review as adjacent-but-coupled reusable ideas. Documented so
@@ -256,7 +234,4 @@ they aren't lost; each has a reason it's not a clean copy-out.
 ## Where this is referenced
 
 `~/Snackbyte/tools/project-setup/SETUP-CHECKLIST.md` lists "Add the manifest-driven
-release flow" as a new-project step and points its source at this folder.
-
-**None of the implementation above exists in this folder yet. This document is the whole
-of it.**
+release flow" as a new-project step and points consumers here.
