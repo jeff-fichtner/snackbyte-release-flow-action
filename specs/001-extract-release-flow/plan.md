@@ -96,6 +96,8 @@ specs/001-extract-release-flow/
 ```text
 action.yml                     # composite Action: inputs (branch, manifest, major-minor),
                                #   outputs (is-env, version, tag); runs the bundled scripts
+environments.json              # the Action's own default manifest + the default-path target
+                               #   (test suites write their OWN stand-in manifests inline)
 scripts/
 ├── derive-version.sh          # ported from snackbyte-base; reads inputs, not fixed files
 ├── resolve-env.sh             # the resolve-env check, extracted from the inline CI job

@@ -37,7 +37,7 @@ Single-project composite-Action layout (per [plan.md](./plan.md)): `action.yml` 
 
 - [ ] T001 Create the source layout: `scripts/` directory at repo root and `.github/workflows/` directory
 - [ ] T002 Create a dev-only `package.json` at repo root with a `test:release` script placeholder (chains the suites; carries NO `exports`/`files`/publish surface — Constitution VI) and `"private": true`
-- [ ] T003 [P] Add a fixture manifest for tests at `scripts/fixtures/environments.json` (stand-ins P/`""`/`main`, A/`-a`/`aaa`, C/`-c`/`ccc`) per [contracts/versioning.md](./contracts/versioning.md)
+- [ ] T003 [P] Add a real default `environments.json` at repo root (production/`main`/`""`, staging/`dev`/`-dev`) — the Action's own manifest and the default-path target; the ported test suites write their OWN stand-in manifests inline (P/A/C) per the source, so no separate fixture file is created
 
 **Checkpoint**: Empty but correct skeleton exists; nothing runs yet.
 
@@ -52,8 +52,8 @@ the extraction spine — US1 and US2 cannot proceed until the scripts exist and 
 **⚠️ CRITICAL**: No user-story work begins until this phase is complete.
 
 - [ ] T004 Port `snackbyte-base/scripts/derive-version.sh` → `scripts/derive-version.sh` VERBATIM first (no logic change), preserving all guards (shallow refusal, collision, unknown-branch, dup-suffix warn) and the tree-hash reuse block
-- [ ] T005 Parameterize `scripts/derive-version.sh`: resolve the manifest from a `MANIFEST` env/arg (default `./environments.json`) instead of the literal `require('./environments.json')`, and MAJOR.MINOR from a `MAJOR_MINOR` env/arg (default: read `package.json`) instead of the literal `require('./package.json')` — algorithm untouched (research D1, D2, D5)
-- [ ] T006 [P] Extract the `resolve-env` predicate from `snackbyte-base/.github/workflows/ci-cd.yml` (the inline `node -e "...environments.some(e => e.branch === ...)"`) into `scripts/resolve-env.sh`, taking the branch as arg (default `$GITHUB_REF_NAME`) and the manifest from `MANIFEST` (default `./environments.json`), writing `is-env=true|false` to stdout and `$GITHUB_OUTPUT` (research D3)
+- [ ] T005 Parameterize `scripts/derive-version.sh`: resolve the manifest from the `MANIFEST` **environment variable** (default `./environments.json`) instead of the literal `require('./environments.json')`, and MAJOR.MINOR from the `MAJOR_MINOR` **environment variable** (default: read `package.json`) instead of the literal `require('./package.json')` — branch stays a positional arg; algorithm untouched (research D1, D2, D5)
+- [ ] T006 [P] Extract the `resolve-env` predicate from `snackbyte-base/.github/workflows/ci-cd.yml` (the inline `node -e "...environments.some(e => e.branch === ...)"`) into `scripts/resolve-env.sh`, taking the branch as a positional arg (default `$GITHUB_REF_NAME`) and the manifest from the `MANIFEST` **environment variable** (default `./environments.json`) — same convention as T005 — writing `is-env=true|false` to stdout and `$GITHUB_OUTPUT` (research D3)
 - [ ] T007 `chmod +x scripts/derive-version.sh scripts/resolve-env.sh`
 
 **Checkpoint**: Both scripts exist, run, and read their inputs — ready to be driven by tests and the Action.
@@ -70,7 +70,7 @@ matches the expected tag ([contracts/versioning.md](./contracts/versioning.md) B
 
 ### Tests for User Story 1 ⚠️ (write/port FIRST; confirm they exercise the real script)
 
-- [ ] T008 [P] [US1] Port `snackbyte-base/scripts/derive-version.test.sh` → `scripts/derive-version.test.sh` (rows B1–B15, throwaway-repo fixtures + local bare origin), adjusting only the path it copies the script from; keep `PKG_MM` support
+- [ ] T008 [P] [US1] Port `snackbyte-base/scripts/derive-version.test.sh` → `scripts/derive-version.test.sh` (rows B1–B15, throwaway-repo fixtures written inline + local bare origin), adjusting only the path it copies the script from; keep `PKG_MM` support. Includes the fail-loud rows B7 (collision), B11 (unknown branch), B12 (shallow) — these satisfy SC-005
 - [ ] T009 [US1] Add extraction-delta rows P3–P5 to `scripts/derive-version.test.sh`: P3 non-default manifest path (`MANIFEST=config/envs.json` derives identical to B1), P4 `MAJOR_MINOR=2.7` override → `v2.7.0`, P5 default reads declared version → `vMM.0` (SC-007)
 
 ### Implementation for User Story 1
@@ -130,7 +130,7 @@ env push and a non-env push ([contracts/versioning.md](./contracts/versioning.md
 
 ### Tests for User Story 4 ⚠️
 
-- [ ] T015 [P] [US4] Write `scripts/action.test.sh` (I1–I2): invoke the composite Action end-to-end against a fixture; assert env push → `is-env=true`, `version=MM.0`, `tag=vMM.0<suffix>` matching derivation, and non-env push → `is-env=false` with `version`/`tag` unset and no tag created (SC-006)
+- [ ] T015 [P] [US4] Write `scripts/action.test.sh` (I1–I2): invoke the composite Action end-to-end against an inline fixture; assert env push → `is-env=true`, `version=MM.0`, `tag=vMM.0<suffix>` matching derivation, and non-env push → `is-env=false` with `version`/`tag` unset and no tag created (SC-006). Additionally assert INV-1/SC-004 automatically: after an env push exactly one new tag exists and the commit count (`git rev-list --count HEAD`) and branch head are unchanged
 
 ### Implementation for User Story 4
 
@@ -149,7 +149,7 @@ env push and a non-env push ([contracts/versioning.md](./contracts/versioning.md
 - [ ] T019 Author `.github/workflows/test.yml`: on every push, checkout with `fetch-depth: 0`, run `npm run test:release`; the job MUST fail on any `FAIL>0` (SC-008, mandatory gate — Constitution V / base Principle VII)
 - [ ] T020 [P] Update `README.md` "Intended shape (deferred)" section to "built": document the real `action.yml` inputs/outputs and a consumer `uses:` example from [contracts/action-io.md](./contracts/action-io.md)
 - [ ] T021 [P] Update `CLAUDE.md` status from "build deferred" to "001 implemented" with a pointer to the scripts and `action.yml`
-- [ ] T022 Run the full [quickstart.md](./quickstart.md) validation locally; confirm `FAIL=0` across every suite and that a successful derive adds exactly one tag and zero commits/branches (INV-1)
+- [ ] T022 Run the full [quickstart.md](./quickstart.md) validation locally; confirm `FAIL=0` across every suite (the INV-1/SC-004 one-tag-zero-commits assertion is now automated in T015, so this is the final end-to-end confirmation, not the sole check)
 
 ---
 

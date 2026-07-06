@@ -48,7 +48,7 @@ Behavior-complete, not enumerative: one row per distinct new behavior.
 | P3 | manifest at a NON-default path derives identically | manifest at `config/envs.json`, no tags | derive P, `manifest=config/envs.json` | `vMM.0` (identical to B1) |
 | P4 | `major-minor` override drives the version line | override `major-minor=2.7`, no tags | derive P | `v2.7.0` |
 | P5 | default `major-minor` reads the declared version | no override, declared version `MM.x`, no tags | derive P | `vMM.0` |
-| I1 | Action interface end-to-end — env push | fixture manifest + version | invoke the Action for an env branch | outputs `is-env=true`, `version=MM.0`, `tag=vMM.0<suffix>` matching derivation |
+| I1 | Action interface end-to-end — env push | fixture manifest + version | invoke the Action for an env branch | outputs `is-env=true`, `version=MM.0`, `tag=vMM.0<suffix>` matching derivation; exactly one new tag, zero new commits, unchanged branch head (INV-1 / SC-004) |
 | I2 | Action interface end-to-end — non-env push | fixture manifest | invoke the Action for a non-env branch | output `is-env=false`; `version`/`tag` unset; no tag created |
 
 ## CI gate
