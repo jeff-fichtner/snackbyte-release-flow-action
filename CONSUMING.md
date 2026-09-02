@@ -36,6 +36,116 @@ library (`package-json`). No → app (`build-id`).
 
 3. **`permissions: contents: write`** on the job — needed to push the tag.
 
+4. **Two repo settings.** Neither is expressible in YAML — both are repo config, and the flow
+   is broken or unenforced without them. See **Repo settings** below.
+
+---
+
+## Repo settings the flow needs
+
+### Allow Actions to push tags — do this BEFORE the first push
+
+The Action pushes the version tag back to the repo. The job's `permissions: contents: write`
+is necessary but **not sufficient**: the *repository* setting caps what any token inside it can
+do, so a repo created with read-only defaults passes every check and then **403s on the tag
+push** — the failure lands at the last step of the first release, which reads as a broken Action
+rather than a missing setting.
+
+```bash
+gh api -X PUT repos/<owner>/<repo>/actions/permissions/workflow \
+  -f default_workflow_permissions=write
+```
+
+(Or web UI: **Settings → Actions → General → Workflow permissions → "Read and write
+permissions" → Save**.) Needs admin on the repo, which the creating account has. Already failed?
+Enable it, then re-run the failed job — nothing needs to be reverted.
+
+> **This is a privilege escalation** — it lets CI push to your default branch. An agent must
+> present it and get an explicit human yes, never grant it silently.
+
+### Branch protection — the merge gate is repo config, not YAML
+
+A workflow can *run* a quality gate on a PR; it cannot *require* it for merge. That is branch
+protection:
+
+```bash
+for BRANCH in main dev; do          # your environment branches
+  gh api -X PUT "repos/<owner>/<repo>/branches/${BRANCH}/protection" \
+    --input - <<'JSON'
+{
+  "required_status_checks": { "strict": false, "contexts": ["validate (merge gate)"] },
+  "required_pull_request_reviews": null,
+  "enforce_admins": false,
+  "restrictions": null,
+  "allow_force_pushes": true
+}
+JSON
+done
+```
+
+Each knob is deliberate:
+
+- **`contexts: ["validate (merge gate)"]`** — the required check is the **job name**, not the
+  workflow's UI label. Get it wrong and the check is never matched, so the gate silently
+  enforces nothing.
+- **`required_pull_request_reviews: null`** — do **not** require PRs. Requiring them breaks
+  fast-forward promotion (a fast-forward is not a PR).
+- **`enforce_admins: false`** — admin override stays available as an explicit at-own-risk
+  escape hatch.
+- **`allow_force_pushes: true`** — needed for the fast-forward/promotion flows.
+
+Branch protection is the *merge* gate. The authoritative backstop is your workflow's own
+push-side gate: re-run the checks on the push and let the Action tag only on pass, so a tag —
+and therefore a deploy — exists only if the gate passed. That holds for a PR merge, an admin
+override, and a direct push alike.
+
+---
+
+## How the version is derived
+
+The pushed branch is used only as **data** — its `tagSuffix`, looked up in `environments.json`.
+One rule covers every environment:
+
+1. **Reuse** if *any* version number is already tagged on *this exact commit*
+   (`git tag --points-at HEAD`), whatever suffix it bears. That is a fast-forward promotion or a
+   resync: the number is reused and stamped with this environment's suffix, so the commit ends up
+   carrying both tags.
+2. **Otherwise advance** to `max(all vMM.* tags) + 1`. The max is over **every** tag — every
+   suffix, every environment — so two distinct commits can never share a number. Collisions are
+   structurally impossible, for any number of environments.
+
+A fresh repo with no tags mints `vMM.0` on its first push, however many commits precede it.
+
+**Two accepted trade-offs**, both intentional:
+
+- The PATCH is **not in the repo** — it lives in the tags, the built artifact, and whatever your
+  app reports at runtime. `package.json` holds only `MAJOR.MINOR`.
+- Patch numbers **have gaps**. A number consumed on one branch raises the next mint on the other,
+  so a channel can skip ahead. The patch is a build id, not a release counter; gaps are normal and
+  informative.
+
+**CI commits nothing.** The Action creates a tag on the pushed commit and pushes only the tag —
+no `chore: release` commit, no `[skip ci]`, no `npm version`. Because nothing is committed back,
+release branches never diverge: fast-forward, merge, and PR promotion all work with no resync.
+
+### Promotion between channels (e.g. `dev` → `main`)
+
+Promote by bringing the downstream branch up to the upstream commit so it is a **fast-forward**.
+That guarantees the existing suffixed tag is on the new HEAD, so the promoted branch **reuses that
+number** (dropping the suffix) rather than minting a fresh one — production ships the exact number
+staging validated.
+
+The fast-forward requirement also makes divergent code **unpromotable**: if `dev` has not absorbed
+a `main` hotfix, it cannot fast-forward, so it cannot carry stale code to production under a wrong
+number. Enforce it with branch protection's "require branches up to date before merging", and
+follow it as a reflex regardless.
+
+### Why no personal access token is needed
+
+The tag is pushed with the default `GITHUB_TOKEN`. A `GITHUB_TOKEN`-pushed tag does **not**
+trigger another workflow run (GitHub's recursion guard). That is fine, and deliberate: gate your
+deploy as a chained `needs:` job in the *same* run, so no second event is required.
+
 ---
 
 ## Recipe A — deployable app (`build-id`, the default)
@@ -118,6 +228,50 @@ Channels map to npm dist-tags via `tagSuffix`: a `next` channel with `tagSuffix:
 
 ---
 
+## Consuming from a subdirectory (the app is not at the repo root)
+
+GitHub only discovers workflows in the **repo root** `.github/workflows/`, so a monorepo runs
+one workflow at the root and points it into the subdirectory. Three edits, all mechanical:
+
+1. **Run npm from the subdirectory.** Add a `defaults` block, at the job level on the jobs that
+   run npm or once at the top level:
+
+   ```yaml
+   defaults:
+     run:
+       working-directory: <app>
+   ```
+
+2. **Tell the Action where the manifest is.** `working-directory` affects only `run:` steps, so
+   it does **not** reach a `uses:` step. Pass the path explicitly:
+
+   ```yaml
+   - uses: jeff-fichtner/snackbyte-release-flow-action@v1
+     with:
+       manifest: <app>/environments.json
+   ```
+
+   The Action reads that manifest for `branch` → `tagSuffix`, and `<app>/package.json` for the
+   `MAJOR.MINOR` line. Its git calls are cwd-independent — git walks up to `.git` itself.
+
+3. **Fix the npm cache key.** `cache: 'npm'` with no path assumes a root lockfile:
+
+   ```yaml
+   - uses: actions/setup-node@v5
+     with:
+       node-version: '24'
+       cache: 'npm'
+       cache-dependency-path: <app>/package-lock.json
+   ```
+
+**Optional — scope the triggers** with `paths:` (`<app>/**` plus the workflow file itself) so
+unrelated changes elsewhere in the repo don't trigger a run. Know the trade-off: a push touching
+only files outside `<app>/` then produces no run, hence no tag and no deploy. That is usually
+what you want — nothing about the app changed — but it couples the release cadence to changes
+under `<app>/` rather than to every push.
+
+---
+
 ## Inputs / outputs reference
 
 **Inputs** (all optional): `branch` (default `github.ref_name`), `manifest` (default
@@ -135,5 +289,6 @@ Channels map to npm dist-tags via `tagSuffix`: a `next` channel with `tagSuffix:
   `is-env=false` and does nothing. Gate downstream steps on `is-env == 'true'`.
 - **The Action tags; it does not deploy or publish.** The tag is the trigger; the deploy/`npm publish`
   is your step, keyed off the outputs.
-- **Pin to `@v1`** for auto-updates within the major, or to a specific `@vX.Y.Z` / `@<sha>` to lock.
-  (Note: a moving `v1` alias is feature 003 — until it's cut, pin to a SHA or branch.)
+- **Pin to `@v1`** for auto-updates within the major, or to a specific `@vX.Y.Z` / `@<sha>` to
+  lock. The `v1` alias is a moving tag: it is fix-forwarded onto each non-breaking release, so
+  `v2` is reserved for an intentional breaking change to the inputs/outputs.
