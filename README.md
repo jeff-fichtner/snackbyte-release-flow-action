@@ -199,17 +199,6 @@ CI creates a **tag only** — never a commit or branch push. Guards: fail-loud o
 existing target tag, refuse shallow clones (they hide tags), anchored regex parsing,
 same-branch run serialization.
 
-## Source to extract from (`snackbyte-base`)
-
-- **Derivation:** `scripts/derive-version.sh` (~120 lines bash)
-- **resolve-env:** the `resolve-env` job in `.github/workflows/ci-cd.yml`, and the
-  `is_env` one-liner in `scripts/add-env.test.sh` / `scripts/resolve-env.mjs`
-- **Tests:** `scripts/derive-version.test.sh` (15 rows B1–B15) + `scripts/add-env.test.sh`
-  (the one-row-edit proof), run via `npm run test:release`
-- **Contract:** `specs/002-derived-tag-staging/contracts/versioning.md` (12-row matrix +
-  invariants) and `specs/003-env-manifest/contracts/versioning.md`
-- **Typed reader (reference, don't extract):** `src/environments.ts`
-
 ## Related reusable patterns (observed, NOT extracted here)
 
 These surfaced in the same review as adjacent-but-coupled reusable ideas. Documented so
@@ -223,15 +212,18 @@ they aren't lost; each has a reason it's not a clean copy-out.
   Action covers the release-flow use; the typed reader stays per-app.
 - **The spin-up / resolver choreography** (`snackbyte-base` `SPIN-UP.md` + `init.mjs`) —
   the *pattern* generalizes: de-template (rename placeholders, strip the template guard,
-  activate the inert `ci-cd.yml.disabled` → `ci-cd.yml`, clear inherited tags), and the
-  **agent-safety STOP-gates** (ask before the `gh api` workflow-permissions escalation,
-  ask before pushing to `main`, "committed-but-not-pushed is the correct stopping
-  point"). But `init.mjs` (14KB) is coupled to *that app's* mode/render axes
-  (`server`/`static`, `prerender`/`dynamic`). The **choreography** is worth documenting
-  per template (it's already what `snackbyte-npm-base`'s Phase 0 spec calls for); the
-  **script** is not a shared artifact.
+  delete everything the setup checklist owns — including CI, which is installed per repo
+  from `CONSUMING.md` rather than inherited — and clear inherited tags), plus the
+  **agent-safety STOP-gates** (ask before pushing to `main`;
+  "committed-but-not-pushed is the correct stopping point"). But `init.mjs` is coupled to
+  *that app's* mode/render axes (`server`/`static`, `prerender`/`dynamic`). The
+  **choreography** is worth documenting per template; the **script** is not a shared
+  artifact.
 
 ## Where this is referenced
 
-`~/Snackbyte/tools/project-setup/SETUP-CHECKLIST.md` lists "Add the manifest-driven
-release flow" as a new-project step and points consumers here.
+- `project-setup/SETUP-CHECKLIST.md` — "Add the manifest-driven release flow" is a
+  new-project step and points consumers at `CONSUMING.md`.
+- `snackbyte-base` — its `DEPLOY.md` and `SUBDIR-LAYOUT.md` defer the whole release-flow
+  half here rather than restating it, and its spin-up resolver deliberately ships no
+  workflow so apps wire one from `CONSUMING.md` instead of inheriting a stale copy.
