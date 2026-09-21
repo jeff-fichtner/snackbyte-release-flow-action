@@ -29,6 +29,15 @@
 #   $1 / $GITHUB_REF_NAME   the pushed branch
 #   $MANIFEST               path to the environment manifest   (default ./environments.json)
 #   $MAJOR_MINOR            override for MAJOR.MINOR            (default: read ./package.json)
+#   $TAG_PREFIX             tag-namespace prefix, e.g. client-node-   (default "" — bare v tags)
+#
+# Tag prefix (feature 004): when a repository holds more than one releasable, each needs its own
+# tag namespace or their numbers corrupt each other (the app's "last vMM.* tag" scan would count
+# the library's tags; both starting at v0.1.0 would collide on the exists-guard). TAG_PREFIX puts
+# this releasable's tags in the namespace `<prefix>v...`; every scan below is anchored on the
+# prefix, so tags with a different prefix — and un-prefixed tags — are invisible to it, and the
+# un-prefixed derivation (prefix "") is in turn blind to prefixed tags. The default "" is today's
+# behavior byte for byte.
 #
 # Usage: scripts/derive-version.sh <branch>   (branch defaults to $GITHUB_REF_NAME)
 set -euo pipefail
@@ -36,6 +45,7 @@ set -euo pipefail
 BRANCH="${1:-${GITHUB_REF_NAME:-}}"
 MANIFEST="${MANIFEST:-./environments.json}"
 VERSION_STRATEGY="${VERSION_STRATEGY:-build-id}"
+TAG_PREFIX="${TAG_PREFIX:-}"
 
 # Validate the strategy FIRST — before any resolve/guard work — so a bad input (a typo) is rejected
 # immediately rather than after side-effect-free-but-wasteful checks (and so a shallow clone can't
@@ -47,6 +57,20 @@ case "$VERSION_STRATEGY" in
     exit 1
     ;;
 esac
+
+# Validate the tag prefix just as early. The rule: empty, or [A-Za-z0-9._-] starting alphanumeric
+# and ending in '-' (so the prefix reads as a namespace: `client-node-v0.1.0`). The class contains
+# no glob or regex metacharacters except '.', which is escaped where the prefix is matched below;
+# a leading '-' is refused because git's CLI would parse the resulting tag as an option. The
+# git-level rules ('..', '.lock', control characters) are checked by git itself.
+if ! [[ "$TAG_PREFIX" =~ ^([A-Za-z0-9][A-Za-z0-9._-]*-)?$ ]]; then
+  echo "Invalid tag-prefix '${TAG_PREFIX}' — expected [A-Za-z0-9._-] starting alphanumeric and ending in '-' (e.g. 'client-node-'), or empty." >&2
+  exit 1
+fi
+if [ -n "$TAG_PREFIX" ] && ! git check-ref-format "refs/tags/${TAG_PREFIX}v0" >/dev/null 2>&1; then
+  echo "Invalid tag-prefix '${TAG_PREFIX}' — not a valid git tag-name fragment (git check-ref-format)." >&2
+  exit 1
+fi
 
 # Resolve the pushing branch's environment from the manifest. An unknown branch cannot be
 # tagged (we wouldn't know which suffix to stamp) — fail loudly. node -p prints the suffix, or
@@ -102,22 +126,25 @@ case "$VERSION_STRATEGY" in
     # MAJOR.MINOR from the MAJOR_MINOR override, else from package.json; the patch field is ignored.
     MM="${MAJOR_MINOR:-$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')")}"
     MME="${MM//./\\.}" # regex-escape the dots for anchored matching
+    PFXE="${TAG_PREFIX//./\\.}" # likewise for the tag prefix ('.' is its only regex metacharacter)
 
-    # The read-back parser is generated from the tag-format parts (prefix 'v', then MM., then the
-    # integer patch, then ANY suffix or none). One regex serves both reuse and mint — it is
-    # suffix-agnostic by construction, so it never needs to know which environments exist.
-    patch_re="^v${MME}\.([0-9]+)(-[A-Za-z0-9._-]+)?\$"
+    # The read-back parser is generated from the tag-format parts (the tag prefix, then 'v', then
+    # MM., then the integer patch, then ANY suffix or none). One regex serves both reuse and mint —
+    # it is suffix-agnostic by construction, so it never needs to know which environments exist,
+    # and it is anchored on the prefix, so another releasable's namespace never leaks in.
+    patch_re="^${PFXE}v${MME}\.([0-9]+)(-[A-Za-z0-9._-]+)?\$"
 
     # Step 1 — reuse: if any number is already tagged on a commit carrying THIS exact source tree
     # (any suffix), take it. The reuse key is the tree hash, not the commit SHA, so a promotion that
     # rewrites the commit but not the content — a merge commit, a squash, or a rebase that stays
     # clean — still reuses the dev number. (A fast-forward is the special case where the SHA is also
     # unchanged.) A rebase that absorbs divergent main changes yields a DIFFERENT tree and correctly
-    # mints a new number. We scan every vMM.* tag, resolve each to its tree, and keep the numbers
-    # whose tree matches HEAD's; the highest such number wins (matching the old --points-at tie-break).
+    # mints a new number. We scan every <prefix>vMM.* tag, resolve each to its tree, and keep the
+    # numbers whose tree matches HEAD's; the highest such number wins (matching the old --points-at
+    # tie-break). (`git tag -l` matches the whole name, so the glob is prefix-anchored too.)
     HEAD_TREE="$(git rev-parse "HEAD^{tree}")"
     patch="$(
-      git tag -l "v${MM}.*" | while IFS= read -r t; do
+      git tag -l "${TAG_PREFIX}v${MM}.*" | while IFS= read -r t; do
         n="$(printf '%s\n' "$t" | sed -nE "s/${patch_re}/\1/p")"
         if [ -n "$n" ]; then
           # A tag may point at a tag object (annotated) or a commit; ^{tree} resolves both to the tree.
@@ -130,7 +157,7 @@ case "$VERSION_STRATEGY" in
 
     # Step 2 — otherwise advance to the global max patch + 1 (empty set => -1 => 0 => first tag).
     if [ -z "$patch" ]; then
-      max="$(git tag -l "v${MM}.*" | sed -nE "s/${patch_re}/\1/p" | sort -n | tail -1)"
+      max="$(git tag -l "${TAG_PREFIX}v${MM}.*" | sed -nE "s/${patch_re}/\1/p" | sort -n | tail -1)"
       patch="$(( ${max:--1} + 1 ))"
     fi
 
@@ -138,7 +165,9 @@ case "$VERSION_STRATEGY" in
     ;;
 esac
 
-tag="v${version}${suffix}"
+# The prefix goes on the TAG only; `version` stays the bare number (it is the artifact identity the
+# consumer bakes/publishes — the prefix is a tag-namespace concern, not part of the version).
+tag="${TAG_PREFIX}v${version}${suffix}"
 
 # Never overwrite or silently reuse a tag. If the target already exists this is a re-run or a
 # race (or an attempt to re-tag an already-released number) — fail loudly so no tag is produced

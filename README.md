@@ -32,8 +32,11 @@ if so, derives and pushes its version **tag only** — never a commit.
 To push the tag, the job needs `permissions: contents: write`.
 
 **Inputs**: `branch` (default `github.ref_name`), `manifest` (default `./environments.json`),
-`major-minor` (default: read `package.json`), `version-strategy` (default `build-id`).
-**Outputs**: `is-env` (`"true"`/`"false"`), `version` (env pushes only), `tag` (env pushes only).
+`major-minor` (default: read `package.json`), `version-strategy` (default `build-id`),
+`tag-prefix` (default `""` — set e.g. `client-node-` when a repo holds a second releasable; its
+tags become `client-node-v…` in their own namespace, invisible to the bare `v…` derivation).
+**Outputs**: `is-env` (`"true"`/`"false"`), `version` (env pushes only; never prefixed), `tag`
+(env pushes only; carries the prefix).
 Full contract:
 [`specs/001-extract-release-flow/contracts/action-io.md`](specs/001-extract-release-flow/contracts/action-io.md).
 
@@ -68,9 +71,9 @@ promise. Under `package-json`, an already-existing target tag fails loudly: that
 ```
 
 **Tests**: `npm run test:release` runs the behavior-complete matrix (B1–B15), the
-parameterization deltas (P3–P5), resolve-env (P1–P2), the one-row-edit proof, and the
-`action.yml` interface replay (I1–I2). CI runs the same suite plus a real `uses: ./` smoke
-test on every push.
+parameterization deltas (P3–P5), the version-strategy rows (S1–S7), the tag-prefix rows
+(T1–T8, X2), resolve-env (P1–P2), the one-row-edit proof, and the `action.yml` interface
+replay (I1–I3). CI runs the same suite plus a real `uses: ./` smoke test on every push.
 
 A **shareable GitHub Action** that turns a repo's `environments.json` manifest into
 its release flow: it answers *"is this pushed branch a deployable environment?"* and,
@@ -171,8 +174,10 @@ independent single-purpose switches:
 Rules: two entries sharing a `tagSuffix` is allowed but warned (their tags become
 indistinguishable); a push to a branch not listed here is rejected by the derivation
 and short-circuited by resolve-env. Tag format is fixed:
-`v${MAJOR}.${MINOR}.${PATCH}${tagSuffix}` — MAJOR.MINOR from `package.json`, PATCH is
-the derived global build id.
+`${tagPrefix}v${MAJOR}.${MINOR}.${PATCH}${tagSuffix}` — MAJOR.MINOR from `package.json`,
+PATCH is the derived global build id within the tag namespace, and `tagPrefix` (the
+`tag-prefix` input, default empty) is the namespace a second releasable in the same repo
+uses so the two never see each other's tags.
 
 ## What the flow does (the two components)
 

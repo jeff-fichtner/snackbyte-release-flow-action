@@ -106,10 +106,11 @@ override, and a direct push alike.
 The pushed branch is used only as **data** — its `tagSuffix`, looked up in `environments.json`.
 One rule covers every environment:
 
-1. **Reuse** if *any* version number is already tagged on *this exact commit*
-   (`git tag --points-at HEAD`), whatever suffix it bears. That is a fast-forward promotion or a
-   resync: the number is reused and stamped with this environment's suffix, so the commit ends up
-   carrying both tags.
+1. **Reuse** if *any* version number is already tagged on a commit carrying *this exact source
+   tree*, whatever suffix it bears. The key is the **repository tree hash**, not the commit SHA, so
+   a promotion reuses the number whether it fast-forwards, merges, squashes, or rebases cleanly;
+   the number is stamped with this environment's suffix, so the same content ends up carrying both
+   tags. A rebase that absorbs divergent changes yields a different tree and mints a new number.
 2. **Otherwise advance** to `max(all vMM.* tags) + 1`. The max is over **every** tag — every
    suffix, every environment — so two distinct commits can never share a number. Collisions are
    structurally impossible, for any number of environments.
@@ -251,8 +252,12 @@ one workflow at the root and points it into the subdirectory. Three edits, all m
        manifest: <app>/environments.json
    ```
 
-   The Action reads that manifest for `branch` → `tagSuffix`, and `<app>/package.json` for the
-   `MAJOR.MINOR` line. Its git calls are cwd-independent — git walks up to `.git` itself.
+   The Action reads that manifest for `branch` → `tagSuffix`. Its git calls are cwd-independent —
+   git walks up to `.git` itself. **`package.json` is not path-aware:** the Action reads it from
+   the checkout root (the `uses:` step's cwd), so for a subdirectory app pass the version line
+   explicitly with `major-minor: "<MAJOR.MINOR>"`. A subdirectory library under
+   `version-strategy: package-json` has no equivalent today — the version would be read from the
+   root `package.json`. (Open point, tracked in `specs/004-tag-prefix/plan.md`.)
 
 3. **Fix the npm cache key.** `cache: 'npm'` with no path assumes a root lockfile:
 
@@ -270,16 +275,123 @@ only files outside `<app>/` then produces no run, hence no tag and no deploy. Th
 what you want — nothing about the app changed — but it couples the release cadence to changes
 under `<app>/` rather than to every push.
 
+### Two releasables in one repository
+
+Git tags are repo-global, so a repository that holds **two releasables** — say a deployed app under
+`packages/service/` and a published library under `packages/client-node/` — would, out of the box,
+have them share one tag namespace: both start at `v0.1.0`, the second to land fails the
+exists-guard, and the app's "highest `vMM.*`" scan would count the library's tags. The
+**`tag-prefix`** input gives each releasable its own namespace. The recipe:
+
+**One workflow per releasable, both at the repo root.** Each has its own
+`defaults.run.working-directory`, its own `manifest:`, its own `tag-prefix` (the library's; the
+app keeps the bare `v`), and a `paths:` filter so a change under one directory does not cut a
+release of the other. The app:
+
+```yaml
+# .github/workflows/release-service.yml
+name: release-service
+on:
+  push:
+    branches: [main, dev]
+    paths: ['packages/service/**', '.github/workflows/release-service.yml']
+permissions:
+  contents: write
+concurrency:
+  group: release-service-${{ github.ref_name }}
+  cancel-in-progress: false
+defaults:
+  run:
+    working-directory: packages/service
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }
+      - id: release
+        uses: jeff-fichtner/snackbyte-release-flow-action@v1
+        with:
+          manifest: packages/service/environments.json
+          major-minor: "0.1"          # package.json is read from the root — see above
+          # tag-prefix omitted: the app owns the bare v0.1.N namespace
+      - if: steps.release.outputs.is-env == 'true'
+        run: echo "Deploy ${{ steps.release.outputs.tag }}"   # v0.1.N / v0.1.N-dev
+```
+
+The library:
+
+```yaml
+# .github/workflows/release-client-node.yml
+name: release-client-node
+on:
+  push:
+    branches: [main]
+    paths: ['packages/client-node/**', '.github/workflows/release-client-node.yml']
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: release-client-node-${{ github.ref_name }}
+  cancel-in-progress: false
+defaults:
+  run:
+    working-directory: packages/client-node
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+          cache-dependency-path: packages/client-node/package-lock.json
+      - id: release
+        uses: jeff-fichtner/snackbyte-release-flow-action@v1
+        with:
+          manifest: packages/client-node/environments.json
+          version-strategy: package-json
+          tag-prefix: client-node-    # tags client-node-v<version>; invisible to the app's scans
+      - if: steps.release.outputs.is-env == 'true'
+        run: npm publish --access public   # publishes packages/client-node's version
+```
+
+What the prefix does and does not do:
+
+- **Namespaces are mutually blind.** The library's derivation reads only `client-node-v…` tags for
+  its exists-guard; the app's reads only bare `v…` tags for its reuse and max. `v0.1.0` and
+  `client-node-v0.1.0` on the same commit is the normal first-push state, not a collision. The
+  `tag` output carries the prefix; the `version` output never does.
+- **Two build-id releasables** work the same way — give each its own prefix (`service-`,
+  `worker-`); their PATCH counters advance independently.
+- **The `paths:` trade-off.** A push touching only files outside both directories triggers
+  *neither* workflow — a change to a shared root file (a lockfile, a shared config) cuts no release
+  unless that path is listed. List shared paths under the workflow that should react to them, or
+  accept that such changes ship with the next in-directory change.
+- **The promotion-reuse key is the *repository* tree hash**, not the subdirectory's. A
+  library-only change alters the tree for the app too. Under `build-id` that is harmless — the
+  app's workflow does not run without a `paths:` match, and if it did run it would mint a fresh,
+  still-unique number rather than a wrong one — but it is why the `paths:` filter is part of the
+  recipe, not an optional nicety.
+- **Version source.** `major-minor` above is explicit because the Action reads `package.json`
+  from the checkout root, not from the subdirectory (see the note under step 2). The library
+  example assumes the same; see the open point referenced there.
+
 ---
 
 ## Inputs / outputs reference
 
 **Inputs** (all optional): `branch` (default `github.ref_name`), `manifest` (default
 `./environments.json`), `major-minor` (default: read `package.json`; ignored under `package-json`),
-`version-strategy` (`build-id` default | `package-json`).
+`version-strategy` (`build-id` default | `package-json`), `tag-prefix` (default `""`; e.g.
+`client-node-` — the tag becomes `<prefix>v<version><suffix>` and the derivation sees only tags
+with that prefix; allowed `[A-Za-z0-9._-]`, starting alphanumeric, ending in `-`).
 
 **Outputs**: `is-env` (`"true"`/`"false"` — gate your deploy/publish on this), `version` and `tag`
-(set only for a release-branch push).
+(set only for a release-branch push; `tag` carries any `tag-prefix`, `version` never does).
 
 ## Gotchas
 
