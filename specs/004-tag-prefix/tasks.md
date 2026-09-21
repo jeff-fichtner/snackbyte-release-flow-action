@@ -34,6 +34,14 @@ unchanged (Constitution VII) — the existing matrix proves it; the new work is 
 - [X] T011 [P] `CONSUMING.md`: `tag-prefix` in the inputs reference; "Two releasables in one repository" under "Consuming from a subdirectory" (one workflow per releasable, `paths:` filter + trade-off, repository-tree reuse key); correct the `<app>/package.json` claim
 - [X] T012 [P] `README.md`: `tag-prefix` in the inputs line
 
+## Phase 5: `package-json` path input (decision taken mid-feature — see plan.md)
+
+- [X] T013 Add rows PJ-default/PJ-defaultS (explicit default == absent, both strategies), PJ1a/b/c (non-root path read under both strategies; the full subdirectory-library case), PJ2 (`major-minor` set ⇒ not read), X3 (missing file fails loud, nothing tagged) to `scripts/derive-version.test.sh`; wiring facts to `scripts/action.test.sh`
+- [X] T014 In `scripts/derive-version.sh`: read `PACKAGE_JSON` (default `./package.json`); `pkg_read` helper — existence check (fail loud naming the input) + the SAME `node -p` expressions with `path.resolve(process.env.PACKAGE_JSON)`; both version reads go through it
+- [X] T015 Add `package-json` input to `action.yml` (default `./package.json`), map as `PACKAGE_JSON`; reword `major-minor`'s description
+- [X] T016 Docs: `CONSUMING.md` — correct the `<app>/package.json` sentence, add `package-json:` to the subdirectory recipe and to both two-releasable workflows, reference table; `README.md`, `CLAUDE.md`, constitution inputs list
+- [X] T017 Full gate green; PJ/X3 rows shown to fail against `main`'s script
+
 ## Dependencies
 
 - Phase 1 (tests) before Phase 2 (impl) — the new rows fail before T005/T006 (proved in T007).

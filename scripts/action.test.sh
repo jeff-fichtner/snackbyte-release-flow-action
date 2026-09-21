@@ -45,6 +45,8 @@ read_action() {
       strategyInputDefault:  has(/version-strategy:[\s\S]*?default:\s*"build-id"/),
       prefixMappedDerive:    has(/id:\s*derive[\s\S]*?TAG_PREFIX:\s*\$\{\{\s*inputs\.tag-prefix/),
       prefixInputDefault:    has(/tag-prefix:[\s\S]*?default:\s*""/),
+      pkgMappedDerive:       has(/id:\s*derive[\s\S]*?PACKAGE_JSON:\s*\$\{\{\s*inputs\.package-json/),
+      pkgInputDefault:       has(/package-json:[\s\S]*?default:\s*"\.\/package\.json"/),
       outIsEnv:  has(/is-env:[\s\S]*?steps\.resolve\.outputs\.is-env/),
       outVersion:has(/version:[\s\S]*?steps\.derive\.outputs\.version/),
       outTag:    has(/tag:[\s\S]*?steps\.derive\.outputs\.tag/),
@@ -68,6 +70,8 @@ assert "wire: version-strategy->derive" "true" "$(jq_get strategyMappedDerive)"
 assert "wire: strategy default build-id" "true" "$(jq_get strategyInputDefault)"
 assert "wire: tag-prefix->derive env"  "true" "$(jq_get prefixMappedDerive)"
 assert "wire: tag-prefix default empty" "true" "$(jq_get prefixInputDefault)"
+assert "wire: package-json->derive env" "true" "$(jq_get pkgMappedDerive)"
+assert "wire: package-json default ./" "true" "$(jq_get pkgInputDefault)"
 assert "wire: output is-env"           "true" "$(jq_get outIsEnv)"
 assert "wire: output version"          "true" "$(jq_get outVersion)"
 assert "wire: output tag"              "true" "$(jq_get outTag)"

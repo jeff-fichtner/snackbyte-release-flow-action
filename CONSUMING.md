@@ -172,7 +172,7 @@ jobs:
       - id: release
         uses: jeff-fichtner/snackbyte-release-flow-action@v1
         # all inputs default: branch=github.ref_name, manifest=./environments.json,
-        # major-minor read from package.json, version-strategy=build-id
+        # package-json=./package.json (supplies major-minor), version-strategy=build-id
       - if: steps.release.outputs.is-env == 'true'
         run: |
           echo "Deploy ${{ steps.release.outputs.tag }}"
@@ -243,21 +243,22 @@ one workflow at the root and points it into the subdirectory. Three edits, all m
        working-directory: <app>
    ```
 
-2. **Tell the Action where the manifest is.** `working-directory` affects only `run:` steps, so
-   it does **not** reach a `uses:` step. Pass the path explicitly:
+2. **Tell the Action where the manifest and the `package.json` are.** `working-directory` affects
+   only `run:` steps, so it does **not** reach a `uses:` step — the Action runs at the checkout
+   root and resolves both files from there. Pass both paths explicitly:
 
    ```yaml
    - uses: jeff-fichtner/snackbyte-release-flow-action@v1
      with:
        manifest: <app>/environments.json
+       package-json: <app>/package.json
    ```
 
-   The Action reads that manifest for `branch` → `tagSuffix`. Its git calls are cwd-independent —
-   git walks up to `.git` itself. **`package.json` is not path-aware:** the Action reads it from
-   the checkout root (the `uses:` step's cwd), so for a subdirectory app pass the version line
-   explicitly with `major-minor: "<MAJOR.MINOR>"`. A subdirectory library under
-   `version-strategy: package-json` has no equivalent today — the version would be read from the
-   root `package.json`. (Open point, tracked in `specs/004-tag-prefix/plan.md`.)
+   The Action reads the manifest for `branch` → `tagSuffix`, and the `package.json` for the
+   version (`MAJOR.MINOR` under `build-id`; the whole version under `package-json`). Its git calls
+   are cwd-independent — git walks up to `.git` itself. Omit `package-json:` and the Action reads
+   the **root** `package.json` — a hard failure if there is none, the wrong version line if there
+   is one.
 
 3. **Fix the npm cache key.** `cache: 'npm'` with no path assumes a root lockfile:
 
@@ -284,9 +285,9 @@ exists-guard, and the app's "highest `vMM.*`" scan would count the library's tag
 **`tag-prefix`** input gives each releasable its own namespace. The recipe:
 
 **One workflow per releasable, both at the repo root.** Each has its own
-`defaults.run.working-directory`, its own `manifest:`, its own `tag-prefix` (the library's; the
-app keeps the bare `v`), and a `paths:` filter so a change under one directory does not cut a
-release of the other. The app:
+`defaults.run.working-directory`, its own `manifest:` and `package-json:`, its own `tag-prefix`
+(the library's; the app keeps the bare `v`), and a `paths:` filter so a change under one
+directory does not cut a release of the other. The app:
 
 ```yaml
 # .github/workflows/release-service.yml
@@ -313,7 +314,7 @@ jobs:
         uses: jeff-fichtner/snackbyte-release-flow-action@v1
         with:
           manifest: packages/service/environments.json
-          major-minor: "0.1"          # package.json is read from the root — see above
+          package-json: packages/service/package.json   # MAJOR.MINOR from the service's own file
           # tag-prefix omitted: the app owns the bare v0.1.N namespace
       - if: steps.release.outputs.is-env == 'true'
         run: echo "Deploy ${{ steps.release.outputs.tag }}"   # v0.1.N / v0.1.N-dev
@@ -353,6 +354,7 @@ jobs:
         uses: jeff-fichtner/snackbyte-release-flow-action@v1
         with:
           manifest: packages/client-node/environments.json
+          package-json: packages/client-node/package.json   # the version that gets tagged + published
           version-strategy: package-json
           tag-prefix: client-node-    # tags client-node-v<version>; invisible to the app's scans
       - if: steps.release.outputs.is-env == 'true'
@@ -376,16 +378,18 @@ What the prefix does and does not do:
   app's workflow does not run without a `paths:` match, and if it did run it would mint a fresh,
   still-unique number rather than a wrong one — but it is why the `paths:` filter is part of the
   recipe, not an optional nicety.
-- **Version source.** `major-minor` above is explicit because the Action reads `package.json`
-  from the checkout root, not from the subdirectory (see the note under step 2). The library
-  example assumes the same; see the open point referenced there.
+- **Each releasable names its own `package.json`.** Both `manifest:` and `package-json:` are
+  resolved from the checkout root (step 2 above); with `package-json:` omitted the Action would
+  read the root file for both, and the library would tag and publish the wrong version.
 
 ---
 
 ## Inputs / outputs reference
 
 **Inputs** (all optional): `branch` (default `github.ref_name`), `manifest` (default
-`./environments.json`), `major-minor` (default: read `package.json`; ignored under `package-json`),
+`./environments.json`), `package-json` (default `./package.json`; the file whose `version` is
+read, resolved from the checkout root like `manifest` — set it for a subdirectory releasable),
+`major-minor` (default: read the `package-json` file; ignored under `package-json` strategy),
 `version-strategy` (`build-id` default | `package-json`), `tag-prefix` (default `""`; e.g.
 `client-node-` — the tag becomes `<prefix>v<version><suffix>` and the derivation sees only tags
 with that prefix; allowed `[A-Za-z0-9._-]`, starting alphanumeric, ending in `-`).

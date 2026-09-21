@@ -13,7 +13,10 @@ namespace. Both start at `v0.1.0`, so the second to land fails the exists-guard;
 "tag-collision design question" `snackbyte-base`'s `SUBDIR-LAYOUT.md` flags and leaves open. Close
 it with one optional input, `tag-prefix`, that puts a releasable's tags in their own namespace
 (`client-node-v0.1.0`) and makes every derivation blind to any other namespace. Default empty —
-today's behavior byte for byte.
+today's behavior byte for byte. A second input, `package-json` (path, default `./package.json`),
+closes the gap found while building it: the Action read `package.json` from the checkout root
+only, so a releasable in a subdirectory could not supply its own version (a library under
+`package-json` strategy had no way at all). Both defaults are byte-identical to today.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -81,6 +84,37 @@ un-prefixed namespace; add prefixed ones).
 6. **Given** any prefixed derivation, **When** it succeeds, **Then** the `tag` output carries the
    prefix and the `version` output does not.
 
+### User Story 3 - A releasable in a subdirectory reads its own `package.json` (Priority: P1)
+
+A maintainer whose releasable lives under `packages/<name>/` passes
+`package-json: packages/<name>/package.json` beside `manifest:`. The Action reads the version from
+that file — `MAJOR.MINOR` under `build-id`, the whole version under `package-json` — instead of
+the checkout root's.
+
+**Why this priority**: Without it the two-releasable layout this feature exists for cannot be
+wired: a `uses:` step runs at the checkout root regardless of the caller's `working-directory`,
+so a subdirectory library under `package-json` strategy would tag and publish the root's version.
+`tag-prefix` is necessary but not sufficient; this input completes it.
+
+**Independent Test**: With the root `package.json` at `0.1.0` and `packages/app/package.json` at
+`3.4.0`, derive with `package-json: packages/app/package.json`; assert `v3.4.0` (not `v0.1.0`).
+Repeat under `package-json` strategy with a prerelease version.
+
+**Acceptance Scenarios**:
+
+1. **Given** no `package-json` input, or `./package.json` explicitly, **When** a push derives under
+   either strategy, **Then** the result is identical to today's (the root file is read).
+2. **Given** `package-json: packages/app/package.json` at `3.4.0` and a root file at `0.1.0`,
+   **When** a push derives under `build-id`, **Then** the tag is `v3.4.0` (the 3.4 line).
+3. **Given** `package-json: packages/lib/package.json` at `3.4.0-rc.1`, **When** a push derives
+   under `package-json` strategy, **Then** the tag is `v3.4.0-rc.1`.
+4. **Given** `manifest:`, `package-json:`, `version-strategy: package-json` and `tag-prefix: lib-`
+   all pointed at `packages/lib/`, **When** a push derives, **Then** the tag is `lib-v<lib version>`.
+5. **Given** `major-minor` set under `build-id`, **When** a push derives, **Then** the `package-json`
+   file is not read (today's behavior) — even if it does not exist.
+6. **Given** a `package-json` path that does not exist, **When** it would be read, **Then** the Action
+   FAILS loudly naming the input and creates nothing.
+
 ### Edge Cases
 
 - **Invalid prefix**: anything other than empty or `[A-Za-z0-9._-]` starting alphanumeric and ending
@@ -121,6 +155,14 @@ un-prefixed namespace; add prefixed ones).
 - **FR-009**: The change MUST be covered by acceptance tests: the unchanged matrix (FR-002), prefixed
   mint/reuse/guard rows (FR-003/004/006), the un-prefixed-blind row (FR-005), the invalid-prefix
   guard (FR-007), prefixed `package-json` rows (FR-008), and an `action.yml` wiring/replay row.
+- **FR-010**: The Action MUST accept an optional `package-json` input (a path, default
+  `./package.json`), resolved from the checkout root exactly as `manifest` is; with the default the
+  behavior MUST be byte-identical to today.
+- **FR-011**: Every read of the version — `MAJOR.MINOR` under `build-id` (when `major-minor` is
+  unset) and the whole version under `package-json` — MUST come from that file; a missing file MUST
+  fail loudly naming the input. Under `build-id` with `major-minor` set the file MUST NOT be read.
+- **FR-012**: FR-010/011 MUST be covered by tests: the default is byte-identical (both strategies);
+  a non-root path is read under both strategies; the missing-file guard; an `action.yml` wiring row.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -147,6 +189,8 @@ un-prefixed namespace; add prefixed ones).
 - **SC-007**: The full suite (old + new) runs green in CI on every push.
 - **SC-008**: The two-releasable scenario (app at `v0.1.0`, library at `client-node-v0.1.0`, each then
   minting its next number) is exercised by hand against one repository and recorded.
+- **SC-009**: With `package-json:` pointed into a subdirectory, the derivation tags that file's
+  version under both strategies; with the default, every existing row is unchanged — verified.
 
 ## Assumptions
 
@@ -155,9 +199,7 @@ un-prefixed namespace; add prefixed ones).
   releasable may point at its own manifest (`manifest:`), as the subdirectory recipe already does.
 - **The reuse key stays the repository tree hash** (Constitution II). Scoping it to a subtree is a
   separate design question, not taken here.
-- **Where `package.json` is read from is unchanged** by this feature — the checkout root, cwd-relative.
-  A releasable in a subdirectory therefore supplies its version line via `major-minor` (build-id); a
-  subdirectory library under `package-json` needs a path input this feature does not add. Recorded
-  as an open point in [plan.md](./plan.md), not silently assumed away.
+- **`package.json` is a path input, like the manifest** — resolved from the checkout root; the
+  caller's `working-directory` never reaches a `uses:` step, so the recipe passes the path explicitly.
 - **Constitution III is amended** to name the optional namespace prefix (the format within a namespace
   is unchanged), rather than carried as a standing deviation.

@@ -3,11 +3,12 @@
 Extends 001's [action-io.md](../../001-extract-release-flow/contracts/action-io.md) and 002's
 [action-io.md](../../002-version-strategy/contracts/action-io.md). Only the delta is shown.
 
-## New input
+## New inputs
 
 | Name | Required | Default | Description |
 |---|---|---|---|
 | `tag-prefix` | no | `""` | Optional tag-namespace prefix, e.g. `client-node-`. The tag becomes `<prefix>v<version><suffix>`; the derivation reads only tags carrying this exact prefix. Allowed: empty, or `[A-Za-z0-9._-]` starting alphanumeric and ending in `-`. |
+| `package-json` | no | `./package.json` | Path to the `package.json` whose `version` is read, resolved from the checkout root exactly like `manifest`. Under `build-id` it supplies `MAJOR.MINOR` (unless `major-minor` is set, in which case the file is not read); under `package-json` strategy it supplies the whole version. A missing file fails loudly naming the input. |
 
 ## Semantics
 
@@ -28,6 +29,17 @@ or that git rejects as a tag-name fragment (`git check-ref-format`), FAILS loudl
 resolve/guard/tag work and creates nothing. Examples refused: `client-node` (no trailing `-`),
 `bad prefix-` (space), `-` (leading dash), `a..b-` (git rule).
 
+## `package-json` semantics
+
+- **Default `./package.json`**: byte-identical to 001/002 — the root file is read, with the same
+  expressions (`.version`, and `.version.split('.').slice(0,2).join('.')` for `MAJOR.MINOR`).
+- **Set** (e.g. `packages/client-node/package.json`): that file is read instead, for both
+  strategies. Relative paths resolve from the checkout root (`$GITHUB_WORKSPACE`), never from the
+  caller's `working-directory` (which does not reach a `uses:` step).
+- **`major-minor` set under `build-id`**: the file is not read at all (unchanged behavior).
+- **Missing file**: FAILS loudly — `package.json not found at '<path>' — set the package-json
+  input …` — and creates nothing.
+
 ## Unchanged
 
 Inputs `branch`, `manifest`, `major-minor`, `version-strategy`; output `is-env`. resolve-env, the
@@ -42,6 +54,7 @@ warning, and the git-identity fallback are prefix-independent.
   uses: jeff-fichtner/snackbyte-release-flow-action@v1
   with:
     manifest: packages/client-node/environments.json
+    package-json: packages/client-node/package.json   # the library's own version
     version-strategy: package-json
     tag-prefix: client-node-          # tags client-node-v<version>; the app keeps bare v tags
 ```

@@ -28,7 +28,8 @@
 # Parameterization (extracted from snackbyte-base; algorithm unchanged):
 #   $1 / $GITHUB_REF_NAME   the pushed branch
 #   $MANIFEST               path to the environment manifest   (default ./environments.json)
-#   $MAJOR_MINOR            override for MAJOR.MINOR            (default: read ./package.json)
+#   $MAJOR_MINOR            override for MAJOR.MINOR            (default: read $PACKAGE_JSON)
+#   $PACKAGE_JSON           path to the package.json to read the version from (default ./package.json)
 #   $TAG_PREFIX             tag-namespace prefix, e.g. client-node-   (default "" — bare v tags)
 #
 # Tag prefix (feature 004): when a repository holds more than one releasable, each needs its own
@@ -45,6 +46,7 @@ set -euo pipefail
 BRANCH="${1:-${GITHUB_REF_NAME:-}}"
 MANIFEST="${MANIFEST:-./environments.json}"
 VERSION_STRATEGY="${VERSION_STRATEGY:-build-id}"
+PACKAGE_JSON="${PACKAGE_JSON:-./package.json}"
 TAG_PREFIX="${TAG_PREFIX:-}"
 
 # Validate the strategy FIRST — before any resolve/guard work — so a bad input (a typo) is rejected
@@ -106,6 +108,20 @@ if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
   exit 1
 fi
 
+# The package.json read, shared by both strategies. Like the manifest, the path is an input
+# resolved from the checkout root (a `uses:` step's cwd), because a releasable in a subdirectory
+# cannot reach it any other way — the caller's working-directory does not apply to a `uses:` step.
+# A missing file fails loudly, naming the input, instead of surfacing as a node stack trace.
+# pkg_read [js]: prints `require(<package.json>).version<js>` — the same expressions as before,
+# parameterized on the path.
+pkg_read() {
+  if [ ! -f "$PACKAGE_JSON" ]; then
+    echo "package.json not found at '${PACKAGE_JSON}' — set the package-json input to the releasable's package.json." >&2
+    exit 1
+  fi
+  PACKAGE_JSON="$PACKAGE_JSON" node -p "require(require('path').resolve(process.env.PACKAGE_JSON)).version${1:-}"
+}
+
 # --- Version strategy ---------------------------------------------------------------------------
 # How the version NUMBER is chosen. Everything else (resolve-env, the guards above, tag-only, the
 # collision guard and push below) is shared and strategy-independent.
@@ -119,12 +135,12 @@ case "$VERSION_STRATEGY" in
   package-json)
     # The version IS whatever package.json declares — verbatim, prerelease and all. major-minor is a
     # build-id concept and is intentionally ignored here (documented in the I/O contract).
-    version="$(node -p "require('./package.json').version")"
+    version="$(pkg_read)"
     ;;
 
   build-id)
     # MAJOR.MINOR from the MAJOR_MINOR override, else from package.json; the patch field is ignored.
-    MM="${MAJOR_MINOR:-$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')")}"
+    MM="${MAJOR_MINOR:-$(pkg_read ".split('.').slice(0,2).join('.')")}"
     MME="${MM//./\\.}" # regex-escape the dots for anchored matching
     PFXE="${TAG_PREFIX//./\\.}" # likewise for the tag prefix ('.' is its only regex metacharacter)
 

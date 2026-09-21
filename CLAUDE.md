@@ -11,7 +11,7 @@ never a commit**. It is the extraction of the manifest-driven release machinery 
 A composite GitHub Action, consumed at `@v1`:
 
 - Logic: `scripts/derive-version.sh` (derive-version), `scripts/resolve-env.sh` (resolve-env)
-- Interface: `action.yml` (composite; inputs `branch`/`manifest`/`major-minor`/`version-strategy`/`tag-prefix`, outputs `is-env`/`version`/`tag`)
+- Interface: `action.yml` (composite; inputs `branch`/`manifest`/`package-json`/`major-minor`/`version-strategy`/`tag-prefix`, outputs `is-env`/`version`/`tag`)
 - Tests: `scripts/*.test.sh`, run via `npm run test:release`; CI in `.github/workflows/test.yml`
 - Consumer wiring: `CONSUMING.md` (app + library recipes, copy-paste)
 - The Action self-versions with its own flow (`.github/workflows/release.yml`, `build-id`).

@@ -19,7 +19,8 @@
 # rows verifying the parameterization this Action adds (non-default MANIFEST path, MAJOR_MINOR
 # override, MAJOR_MINOR default) — see specs/001-extract-release-flow/contracts/versioning.md.
 # Rows S1-S7/BD-default/X1 are the version-strategy rows (feature 002). Rows T1-T8/TP-default/X2
-# are the tag-prefix rows (feature 004) — see specs/004-tag-prefix/contracts/versioning.md.
+# (tag prefix) and PJ-default/PJ1-PJ2/X3 (package-json path) are feature 004's — see
+# specs/004-tag-prefix/contracts/versioning.md.
 set -uo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/derive-version.sh"
@@ -417,6 +418,56 @@ W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
   assert X2c "FAIL" "$(derive main TAG_PREFIX=-)"
   assert X2d "FAIL" "$(derive main TAG_PREFIX=a..b-)"
   assert X2n "$n_before" "$(git tag | wc -l | tr -d ' ')" )
+
+# ------------------------------------------------------------------------------------------------
+# package-json path rows (feature 004) — the version file is an input, resolved from the checkout
+# root like MANIFEST, so a releasable in a subdirectory can point at its own package.json.
+# ------------------------------------------------------------------------------------------------
+
+# set_sub_pkg <dir> <version> -> write <dir>/package.json with that version and commit it; the ROOT
+# package.json keeps PKG_MM.0, so a row that reads the wrong file gets a visibly wrong answer.
+set_sub_pkg() { mkdir -p "$1"; printf '{"name":"sub","version":"%s","private":true}\n' "$2" > "$1/package.json"; git add "$1/package.json"; git commit -q -m "sub pkg $2"; }
+export -f set_sub_pkg
+
+# PJ-default — an explicit ./package.json equals the absent input (byte-identical default), under
+#   build-id (the same fixture as BD-default) and under package-json.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  git tag -a "v${PKG_MM}.0" -m x; commit
+  d1="$(derive main)"
+  git tag -d "v${PKG_MM}.1" >/dev/null 2>&1; git push -q origin ":refs/tags/v${PKG_MM}.1" >/dev/null 2>&1 || true
+  d2="$(derive main PACKAGE_JSON=./package.json)"
+  assert PJdef "$d1" "$d2" )
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0
+  assert PJdefS "v1.4.0" "$(derive main VERSION_STRATEGY=package-json PACKAGE_JSON=./package.json)" )
+
+# PJ1 — a NON-root path is read under BOTH strategies. packages/app/package.json says 3.4.0 while
+#   the root says PKG_MM.0: build-id derives the 3.4 line (v3.4.0), package-json tags v3.4.0-rc.1
+#   from packages/lib. Reading the root instead would give vPKG_MM.0 — visibly wrong.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  set_sub_pkg packages/app 3.4.0
+  assert PJ1a "v3.4.0" "$(derive main PACKAGE_JSON=packages/app/package.json)" )
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  set_sub_pkg packages/lib 3.4.0-rc.1
+  assert PJ1b "v3.4.0-rc.1" "$(derive main VERSION_STRATEGY=package-json PACKAGE_JSON=packages/lib/package.json)" )
+
+# PJ1' — the subdirectory library case in full: its own manifest, its own package.json, its own tag
+#   namespace — the three inputs the two-releasables recipe passes.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  set_sub_pkg packages/lib 2.5.0
+  mkdir -p packages/lib; printf '%s\n' '{ "environments": [ { "name":"latest","branch":"main","tagSuffix":"" } ] }' > packages/lib/environments.json
+  git add packages/lib/environments.json; git commit -q -m "lib manifest"
+  assert PJ1c "lib-v2.5.0" "$(derive main MANIFEST=packages/lib/environments.json PACKAGE_JSON=packages/lib/package.json VERSION_STRATEGY=package-json TAG_PREFIX=lib-)" )
+
+# PJ2 — major-minor set: the package.json is NOT read under build-id (today's behavior), so a
+#   subdirectory app that passes major-minor works even when the pointed-at file is absent.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  assert PJ2 "v2.7.0" "$(derive main MAJOR_MINOR=2.7 PACKAGE_JSON=does/not/exist.json)" )
+
+# X3 — a missing package.json fails loud, naming the input; nothing tagged.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  assert X3a "FAIL" "$(derive main PACKAGE_JSON=does/not/exist.json)"
+  assert X3b "FAIL" "$(derive main VERSION_STRATEGY=package-json PACKAGE_JSON=does/not/exist.json)"
+  assert X3n "0" "$(git tag | wc -l | tr -d ' ')" )
 
 echo ""
 P="$(wc -l < "$PASS_F" | tr -d ' ')"; F="$(wc -l < "$FAIL_F" | tr -d ' ')"
