@@ -24,7 +24,7 @@ if so, derives and pushes its version **tag only** — never a commit.
 - id: release
   uses: jeff-fichtner/snackbyte-release-flow-action@v1
   # inputs all default: branch=github.ref_name, manifest=./environments.json,
-  # major-minor read from package.json's version (first two components)
+  # package-json=./package.json (major-minor = its version's first two components)
 - if: steps.release.outputs.is-env == 'true'
   run: echo "Deploying ${{ steps.release.outputs.tag }} (version ${{ steps.release.outputs.version }})"
 ```
@@ -32,9 +32,11 @@ if so, derives and pushes its version **tag only** — never a commit.
 To push the tag, the job needs `permissions: contents: write`.
 
 **Inputs**: `branch` (default `github.ref_name`), `manifest` (default `./environments.json`),
-`major-minor` (default: read `package.json`), `version-strategy` (default `build-id`),
-`tag-prefix` (default `""` — set e.g. `client-node-` when a repo holds a second releasable; its
-tags become `client-node-v…` in their own namespace, invisible to the bare `v…` derivation).
+`package-json` (default `./package.json` — the file whose version is read; point it into a
+subdirectory for a releasable that does not live at the repo root), `major-minor` (default: read
+from the `package-json` file), `version-strategy` (default `build-id`), `tag-prefix` (default
+`""` — set e.g. `client-node-` when a repo holds a second releasable; its tags become
+`client-node-v…` in their own namespace, invisible to the bare `v…` derivation).
 **Outputs**: `is-env` (`"true"`/`"false"`), `version` (env pushes only; never prefixed), `tag`
 (env pushes only; carries the prefix).
 Full contract:

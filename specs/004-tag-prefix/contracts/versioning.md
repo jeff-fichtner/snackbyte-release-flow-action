@@ -39,11 +39,29 @@ A/`-a`/`aaa` as in 001.
 | X2d | `a..b-` (git ref rule) | **FAIL**, non-zero |
 | X2n | after all four | tag list unchanged (nothing created) |
 
+## package-json path (new)
+
+The root fixture `package.json` stays at `MM.0`; a subdirectory file carries a visibly different
+version, so a row that reads the wrong file gets a wrong answer.
+
+| Row | Behavior | Setup | Invocation | Expected |
+|---|---|---|---|---|
+| PJ-default | explicit `./package.json` equals absent (build-id) | `vMM.0` exists, new commit | `derive main` vs `derive main PACKAGE_JSON=./package.json` | equal (`vMM.1`) |
+| PJ-defaultS | explicit `./package.json` equals absent (package-json) | pkg `1.4.0` | strategy=package-json, `PACKAGE_JSON=./package.json` | `v1.4.0` |
+| PJ1a | non-root path read under build-id | `packages/app/package.json` = `3.4.0`; root = `MM.0` | `PACKAGE_JSON=packages/app/package.json` | `v3.4.0` |
+| PJ1b | non-root path read under package-json | `packages/lib/package.json` = `3.4.0-rc.1` | strategy=package-json, `PACKAGE_JSON=packages/lib/package.json` | `v3.4.0-rc.1` |
+| PJ1c | the subdirectory library in full | `packages/lib/{package.json=2.5.0, environments.json}` | `MANIFEST=packages/lib/environments.json PACKAGE_JSON=packages/lib/package.json`, strategy=package-json, prefix `lib-` | `lib-v2.5.0` |
+| PJ2 | `major-minor` set ⇒ file not read (build-id) | none | `MAJOR_MINOR=2.7 PACKAGE_JSON=does/not/exist.json` | `v2.7.0` |
+| X3a | missing file fails loud (build-id) | none | `PACKAGE_JSON=does/not/exist.json` | **FAIL** |
+| X3b | missing file fails loud (package-json) | none | strategy=package-json, same path | **FAIL** |
+| X3n | after both | — | — | tag list unchanged |
+
 ## action.yml wiring (action.test.sh)
 
 | Row | Behavior | Expected |
 |---|---|---|
 | wire | `inputs.tag-prefix` mapped to the derive step as `TAG_PREFIX`; default `""` | both facts true |
+| wire | `inputs.package-json` mapped to the derive step as `PACKAGE_JSON`; default `"./package.json"` | both facts true |
 | I3 | env push replayed with `tag-prefix: client-node-` | `is-env=true`, `version=0.1.0`, `tag=client-node-v0.1.0` |
 
 ## Namespace invariants (hold for every row)
@@ -61,20 +79,29 @@ A/`-a`/`aaa` as in 001.
 
 ## By-hand scenario (SC-008)
 
-One throwaway repository; the app's derive (`build-id`, no prefix, root manifest) and the library's
-derive (`package-json`, `client-node-`, its own manifest) run as two "workflows":
+One throwaway repository in the concrete shape — `packages/service/` and `packages/client-node/`,
+each with its own `package.json` and `environments.json`, **no root `package.json`**. The app's
+derive (`build-id`, no prefix, `manifest:`+`package-json:` → `packages/service/`) and the
+library's (`package-json`, `client-node-`, both paths → `packages/client-node/`) run as two
+"workflows":
 
+0. Control — the app's derive without `package-json:` → FAIL, `package.json not found at
+   './package.json' — set the package-json input …` (the gap, now loud instead of wrong).
 1. First push to `main`: app → `v0.1.0`; library → `client-node-v0.1.0` (same commit, no collision).
-2. App change on `dev`: app → `v0.1.1-dev`.
+2. Service change on `dev`: app → `v0.1.1-dev`.
 3. Fast-forward `dev`→`main`: app → `v0.1.1` (reuse); library re-run → FAIL on its own guard.
-4. Library bump to `0.1.1` on `main`: library → `client-node-v0.1.1`.
-5. App run on that library-only commit (no `paths:` filter): app → `v0.1.2` (fresh tree — the
-   documented repository-tree trade-off).
-6. Re-run either unchanged: each FAILS on its own guard, never the other's.
+4. Library bump — only `packages/client-node/package.json` → `0.2.0`: library → `client-node-v0.2.0`.
+5. Service line bump — only `packages/service/package.json` → `1.0.0`: app → `v1.0.0`; library
+   re-run → FAIL on its own guard (`client-node-v0.2.0` exists; its file did not change).
 
-Final namespace: `client-node-v0.1.0 client-node-v0.1.1 v0.1.0 v0.1.1 v0.1.1-dev v0.1.2`.
+Final namespace: `client-node-v0.1.0 client-node-v0.2.0 v0.1.0 v0.1.1 v0.1.1-dev v1.0.0`.
+
+(An earlier run with a shared root `package.json` additionally showed step "app run on a
+library-only commit without a `paths:` filter → fresh number `v0.1.2`" — the documented
+repository-tree trade-off.)
 
 ## Acceptance
 
 All existing rows pass unchanged (SC-001); T1–T8 pass (SC-002/003/004/005); X2 passes (SC-006);
-wiring + I3 pass; full suite green in CI (SC-007); the by-hand scenario recorded (SC-008).
+PJ-default/PJ1/PJ2/X3 pass (SC-009); wiring + I3 pass; full suite green in CI (SC-007); the
+by-hand scenario recorded (SC-008).

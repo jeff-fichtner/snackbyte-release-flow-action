@@ -18,10 +18,18 @@ inputs:
     description: "Path to the environments manifest (relative to the checkout)."
     required: false
     default: "./environments.json"
+  package-json:
+    description: >-
+      Path to the package.json whose version is read (relative to the checkout, like manifest).
+      Set it when the releasable lives in a subdirectory — a uses: step runs at the checkout
+      root, so the caller's working-directory does not reach it. Under build-id it supplies
+      MAJOR.MINOR (unless major-minor is set); under package-json it supplies the whole version.
+    required: false
+    default: "./package.json"
   major-minor:
     description: >-
       Override for the MAJOR.MINOR version line (build-id strategy only). When empty, the Action
-      reads package.json's version and uses its first two components. Ignored when
+      reads the package-json file's version and uses its first two components. Ignored when
       version-strategy is package-json.
     required: false
     default: ""
@@ -69,6 +77,7 @@ runs:
       shell: bash
       env:
         MANIFEST: ${{ inputs.manifest }}
+        PACKAGE_JSON: ${{ inputs.package-json }}
         MAJOR_MINOR: ${{ inputs.major-minor }}
         VERSION_STRATEGY: ${{ inputs.version-strategy }}
         TAG_PREFIX: ${{ inputs.tag-prefix }}

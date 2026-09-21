@@ -6,7 +6,8 @@ Rationale: MINOR — Principle III materially expanded. The tag format gains an 
 NAMESPACE prefix (`${tagPrefix}v…`, default empty) so a repository can hold more than one
 releasable; reuse and max are computed within a namespace. Within a namespace the format and
 the one-rule derivation are unchanged. The Additional Constraints inputs list gains `tag-prefix`
-(and, catching up, `version-strategy` from 002).
+and `package-json` (the path the version is read from; a parameterization of the hard-coded
+`./package.json` read, in the spirit of VII) — and, catching up, `version-strategy` from 002.
 
 Principles modified:
   III. Fixed, Derived Tag Format — optional namespace prefix; max/reuse per namespace.
@@ -159,8 +160,9 @@ is permitted but MUST be warned (their tags become indistinguishable).
 
 **Inputs / outputs (intended `action.yml`).** Inputs: `branch` (default
 `github.ref_name`), `manifest` (path or inline JSON, default `./environments.json`),
-`major-minor` (default: read `package.json`), `version-strategy` (`build-id` default |
-`package-json`), `tag-prefix` (default `""`). Outputs: `is-env` (resolve-env result),
+`package-json` (path, default `./package.json`), `major-minor` (default: read the
+`package-json` file), `version-strategy` (`build-id` default | `package-json`), `tag-prefix`
+(default `""`). Outputs: `is-env` (resolve-env result),
 `version` (`MM.P`, never prefixed), `tag` (`<prefix>vMM.P<suffix>`).
 
 ## Development Workflow
