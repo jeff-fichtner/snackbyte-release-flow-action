@@ -11,7 +11,7 @@ never a commit**. It is the extraction of the manifest-driven release machinery 
 A composite GitHub Action, consumed at `@v1`:
 
 - Logic: `scripts/derive-version.sh` (derive-version), `scripts/resolve-env.sh` (resolve-env)
-- Interface: `action.yml` (composite; inputs `branch`/`manifest`/`major-minor`/`version-strategy`, outputs `is-env`/`version`/`tag`)
+- Interface: `action.yml` (composite; inputs `branch`/`manifest`/`major-minor`/`version-strategy`/`tag-prefix`, outputs `is-env`/`version`/`tag`)
 - Tests: `scripts/*.test.sh`, run via `npm run test:release`; CI in `.github/workflows/test.yml`
 - Consumer wiring: `CONSUMING.md` (app + library recipes, copy-paste)
 - The Action self-versions with its own flow (`.github/workflows/release.yml`, `build-id`).
@@ -42,8 +42,10 @@ not new logic. Source of truth:
 
 ## Non-negotiables (the contract)
 
-- Tag format is fixed: `v${MAJOR}.${MINOR}.${PATCH}${tagSuffix}` (MAJOR.MINOR from
-  `package.json`; PATCH is a global monotonic build id derived from tags).
+- Tag format is fixed: `${tagPrefix}v${MAJOR}.${MINOR}.${PATCH}${tagSuffix}` (MAJOR.MINOR from
+  `package.json`; PATCH is a global monotonic build id derived from tags; `tagPrefix` is the
+  optional `tag-prefix` input — default empty — giving a second releasable in the same repo its
+  own tag namespace, invisible to the bare `v…` derivation and vice versa).
 - Reuse key is the **tree hash**, not the commit SHA (dev→main promotion reuses the
   number across ff/merge/squash/clean-rebase; a divergent rebase mints a new number).
 - CI creates a tag only — never a commit or branch push.

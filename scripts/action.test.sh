@@ -14,6 +14,7 @@
 # Asserts (see specs/001-extract-release-flow/contracts/versioning.md):
 #   I1  env push     -> is-env=true, version=MM.0, tag=vMM.0<suffix> matching derivation
 #   I2  non-env push -> is-env=false, version/tag unset, NO tag created
+#   I3  env push with tag-prefix -> tag carries the prefix, version does not (feature 004)
 #   INV-1/SC-004: after an env push, exactly one new tag, zero new commits, unchanged branch head.
 set -uo pipefail
 
@@ -42,6 +43,8 @@ read_action() {
       mmMappedDerive:        has(/MAJOR_MINOR:\s*\$\{\{\s*inputs\.major-minor/),
       strategyMappedDerive:  has(/VERSION_STRATEGY:\s*\$\{\{\s*inputs\.version-strategy/),
       strategyInputDefault:  has(/version-strategy:[\s\S]*?default:\s*"build-id"/),
+      prefixMappedDerive:    has(/id:\s*derive[\s\S]*?TAG_PREFIX:\s*\$\{\{\s*inputs\.tag-prefix/),
+      prefixInputDefault:    has(/tag-prefix:[\s\S]*?default:\s*""/),
       outIsEnv:  has(/is-env:[\s\S]*?steps\.resolve\.outputs\.is-env/),
       outVersion:has(/version:[\s\S]*?steps\.derive\.outputs\.version/),
       outTag:    has(/tag:[\s\S]*?steps\.derive\.outputs\.tag/),
@@ -63,6 +66,8 @@ assert "wire: manifest->derive env"    "true" "$(jq_get manifestMappedDerive)"
 assert "wire: major-minor->derive env" "true" "$(jq_get mmMappedDerive)"
 assert "wire: version-strategy->derive" "true" "$(jq_get strategyMappedDerive)"
 assert "wire: strategy default build-id" "true" "$(jq_get strategyInputDefault)"
+assert "wire: tag-prefix->derive env"  "true" "$(jq_get prefixMappedDerive)"
+assert "wire: tag-prefix default empty" "true" "$(jq_get prefixInputDefault)"
 assert "wire: output is-env"           "true" "$(jq_get outIsEnv)"
 assert "wire: output version"          "true" "$(jq_get outVersion)"
 assert "wire: output tag"              "true" "$(jq_get outTag)"
@@ -71,7 +76,7 @@ assert "wire: output tag"              "true" "$(jq_get outTag)"
 # invoke_action <workdir> <branch>  -> echoes "is-env|version|tag" after replaying both steps with
 # the real env mapping and the real gate. Uses the shipped scripts via their real paths.
 invoke_action() {
-  local wd="$1" branch="$2" manifest="${3:-./environments.json}" mm="${4:-}"
+  local wd="$1" branch="$2" manifest="${3:-./environments.json}" mm="${4:-}" prefix="${5:-}"
   ( cd "$wd"
     local gho; gho="$(mktemp)"
     # Step 1 (resolve): env MANIFEST=<inputs.manifest>  (as action.yml maps it)
@@ -81,7 +86,7 @@ invoke_action() {
     # Step 2 (derive): the real gate — only if is-env == 'true'
     if [ "$is_env" = "true" ]; then
       local gho2; gho2="$(mktemp)"
-      if GITHUB_OUTPUT="$gho2" MANIFEST="$manifest" MAJOR_MINOR="$mm" bash "$ROOT/scripts/derive-version.sh" "$branch" >/dev/null 2>&1; then
+      if GITHUB_OUTPUT="$gho2" MANIFEST="$manifest" MAJOR_MINOR="$mm" TAG_PREFIX="$prefix" bash "$ROOT/scripts/derive-version.sh" "$branch" >/dev/null 2>&1; then
         version="$(sed -nE 's/^version=(.*)$/\1/p' "$gho2")"
         tag="$(sed -nE 's/^tag=(.*)$/\1/p' "$gho2")"
       fi
@@ -154,6 +159,12 @@ OUT2="$(invoke_action "$W2" feature-x)"
 assert "I2 non-env push output" "false||" "$OUT2"
 tags_after2="$(git -C "$W2" tag | wc -l | tr -d ' ')"
 assert "I2 no tag created" "$tags_before2" "$tags_after2"
+
+# I3 — env push with a tag-prefix (feature 004): the replayed derive step receives TAG_PREFIX as
+#   action.yml maps it; the tag output carries the prefix, the version output does not.
+W3="$(mk_repo)"
+OUT3="$(invoke_action "$W3" main ./environments.json "" client-node-)"
+assert "I3 prefixed env push output" "true|0.1.0|client-node-v0.1.0" "$OUT3"
 
 echo ""
 echo "action.yml interface: PASS=${PASS} FAIL=${FAIL}"

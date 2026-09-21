@@ -18,6 +18,8 @@
 # Rows B1-B15 are the ported source matrix (algorithm behaviors). Rows P3-P5 are extraction-delta
 # rows verifying the parameterization this Action adds (non-default MANIFEST path, MAJOR_MINOR
 # override, MAJOR_MINOR default) — see specs/001-extract-release-flow/contracts/versioning.md.
+# Rows S1-S7/BD-default/X1 are the version-strategy rows (feature 002). Rows T1-T8/TP-default/X2
+# are the tag-prefix rows (feature 004) — see specs/004-tag-prefix/contracts/versioning.md.
 set -uo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/derive-version.sh"
@@ -82,12 +84,25 @@ derive() {
   fi
 }
 
+# derive_out: like derive, but prints "version|tag" (both GITHUB_OUTPUT lines) — for rows that
+# assert the two outputs differ (the tag carries the prefix; the version never does).
+derive_out() {
+  local branch="$1"; shift
+  local gho
+  gho="$(mktemp)"
+  if GITHUB_OUTPUT="$gho" env "$@" "$SCRIPT" "$branch" >/dev/null 2>&1; then
+    echo "$(sed -nE 's/^version=(.*)$/\1/p' "$gho")|$(sed -nE 's/^tag=(.*)$/\1/p' "$gho")"
+  else
+    echo "FAIL"
+  fi
+}
+
 # assert <row> <expected> <actual> — counters live in files so subshell results propagate.
 assert() {
   if [ "$2" = "$3" ]; then echo x >> "$PASS_F"; printf '  ok   %-4s expected %-16s\n' "$1" "$2"
   else echo x >> "$FAIL_F"; printf '  FAIL %-4s expected %-16s got %s\n' "$1" "$2" "$3"; fi
 }
-export -f write_manifest fresh_repo commit derive assert
+export -f write_manifest fresh_repo commit derive derive_out assert
 
 echo "Deriving against package.json MAJOR.MINOR = ${PKG_MM} (stand-ins P/'' A/-a C/-c)"
 
@@ -300,6 +315,108 @@ W="$(fresh_repo)"; ( cd "$W"; git checkout -q -b feature-x; set_pkg 1.4.0
 # X1 — an unrecognized strategy fails loud, no tag.
 W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
   assert X1 "FAIL" "$(derive main VERSION_STRATEGY=bogus)" )
+
+# ------------------------------------------------------------------------------------------------
+# Tag-prefix rows (feature 004) — two releasables sharing one repository's tag namespace.
+# See specs/004-tag-prefix/contracts/versioning.md. PFX is the stand-in library prefix.
+# ------------------------------------------------------------------------------------------------
+PFX="client-node-"; export PFX
+
+# TP-default — an EMPTY prefix is byte-identical to no prefix (the whole B/P/S matrix above already
+#   ran with the prefix unset; this pins that an explicit empty string is the same code path).
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  git tag -a "v${PKG_MM}.0" -m x; commit
+  d1="$(derive main)"                              # prefix unset
+  git tag -d "v${PKG_MM}.1" >/dev/null 2>&1        # undo so the explicit run sees the same state
+  git push -q origin ":refs/tags/v${PKG_MM}.1" >/dev/null 2>&1 || true
+  d2="$(derive main TAG_PREFIX=)"                  # explicit empty prefix
+  assert TPdef "$d1" "$d2" )
+
+# T1 — prefixed mint, first ever: push P with prefix -> client-node-v0.1.0
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  assert T1 "${PFX}v${PKG_MM}.0" "$(derive main TAG_PREFIX="$PFX")" )
+
+# T1' — prefixed mint on a suffixed environment: the suffix still goes after the version
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q -b aaa
+  assert T1p "${PFX}v${PKG_MM}.0-a" "$(derive aaa TAG_PREFIX="$PFX")" )
+
+# T2 — a prefixed derivation is BLIND to un-prefixed tags, for BOTH reuse and mint. Un-prefixed
+#   v0.1.0/v0.1.1 exist on earlier commits and v0.1.4 sits on HEAD's own tree. If the prefixed scan
+#   counted them it would reuse 4 (tree match) or mint 5 (max+1); it must mint its own first
+#   number, client-node-v0.1.0 — which also proves it does NOT collide with the bare v0.1.0.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  git tag -a "v${PKG_MM}.0" -m x; commit; git tag -a "v${PKG_MM}.1" -m x
+  commit; git tag -a "v${PKG_MM}.4" -m x           # on HEAD's tree — a reuse decoy
+  assert T2 "${PFX}v${PKG_MM}.0" "$(derive main TAG_PREFIX="$PFX")" )
+
+# T3 — the UN-prefixed derivation is BLIND to prefixed tags (the invariant that keeps today's
+#   consumers safe when a library joins their repo). Prefixed 0.1.9 on an earlier commit and
+#   prefixed 0.1.4 on HEAD's tree; no un-prefixed tags -> the app mints its first number, v0.1.0.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  git tag -a "${PFX}v${PKG_MM}.9" -m x; commit
+  git tag -a "${PFX}v${PKG_MM}.4" -m x             # on HEAD's tree — a reuse decoy
+  assert T3 "v${PKG_MM}.0" "$(derive main)" )
+
+# T3' — the max is per-namespace: bare v0.1.2 exists, prefixed 0.1.9 exists; push P on a fresh
+#   commit -> v0.1.3 (advances over ITS OWN max, not the library's).
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  git tag -a "v${PKG_MM}.2" -m x; git tag -a "${PFX}v${PKG_MM}.9" -m x; commit
+  assert T3p "v${PKG_MM}.3" "$(derive main)" )
+
+# T4 — prefixed collision guard (B7 in the prefixed namespace): HEAD carries client-node-v0.1.2-a
+#   and client-node-v0.1.2; re-derive with the prefix -> FAIL-loud, no tag.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "${PFX}v${PKG_MM}.2-a" -m x; git tag -a "${PFX}v${PKG_MM}.2" -m x
+  assert T4 "FAIL" "$(derive main TAG_PREFIX="$PFX")" )
+
+# T4' — the guard checks the PREFIXED tag, not the bare one: B7's exact state (HEAD carries bare
+#   v0.1.2-a and v0.1.2, which FAILS un-prefixed) does not block the prefixed namespace.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "v${PKG_MM}.2-a" -m x; git tag -a "v${PKG_MM}.2" -m x
+  assert T4p "${PFX}v${PKG_MM}.0" "$(derive main TAG_PREFIX="$PFX")" )
+
+# T5 — prefixed promotion across a MERGE commit reuses the PREFIXED number (B14 with a prefix).
+#   dev's commit carries client-node-v0.1.1-a AND a decoy bare v0.1.7-a on the same tree; main is
+#   merged --no-ff (new commit, dev's tree). Push P with the prefix -> client-node-v0.1.1: the
+#   reuse key is the tree, matched only against this namespace's tags (not 7, not a fresh 2).
+W="$(fresh_repo)"; ( cd "$W"
+  base="$(git rev-parse main)"
+  git tag -a "${PFX}v${PKG_MM}.0" -m x             # prefixed 0 already consumed on base
+  git checkout -q -b aaa "$base"
+  commit devwork
+  git tag -a "${PFX}v${PKG_MM}.1-a" -m x           # the library's dev release, on dev's commit
+  git tag -a "v${PKG_MM}.7-a" -m x                 # the app's tag on the SAME tree — a decoy
+  git checkout -q -B main "$base"
+  git merge -q --no-ff -m "merge dev" aaa          # NEW merge commit; tree == dev's
+  assert T5 "${PFX}v${PKG_MM}.1" "$(derive main TAG_PREFIX="$PFX")" )
+
+# T6 — prefixed package-json: pkg 1.4.0 with the bare v1.4.0 ALREADY tagged (the app happened to
+#   land there first) -> client-node-v1.4.0, no collision. This is the handoff's concrete case:
+#   both releasables start at 0.1.0/1.4.0 and the second to land must not fail the exists-guard.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0
+  git tag -a "v1.4.0" -m x
+  assert T6 "${PFX}v1.4.0" "$(derive main VERSION_STRATEGY=package-json TAG_PREFIX="$PFX")" )
+
+# T7 — prefixed package-json collision = the "bump package.json" guard, in the prefixed namespace:
+#   client-node-v1.4.0 exists -> FAIL.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0
+  git tag -a "${PFX}v1.4.0" -m x
+  assert T7 "FAIL" "$(derive main VERSION_STRATEGY=package-json TAG_PREFIX="$PFX")" )
+
+# T8 — outputs: `tag` carries the prefix, `version` never does.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  assert T8 "${PKG_MM}.0|${PFX}v${PKG_MM}.0" "$(derive_out main TAG_PREFIX="$PFX")" )
+
+# X2 — an invalid prefix is refused loud BEFORE any tag work: no trailing '-', an illegal
+#   character, a leading '-', and a git-illegal fragment ('..'). Each must FAIL and leave the tag
+#   list untouched (the validation runs before resolve/guards, so nothing can have been created).
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  n_before="$(git tag | wc -l | tr -d ' ')"
+  assert X2a "FAIL" "$(derive main TAG_PREFIX=client-node)"
+  assert X2b "FAIL" "$(derive main TAG_PREFIX='bad prefix-')"
+  assert X2c "FAIL" "$(derive main TAG_PREFIX=-)"
+  assert X2d "FAIL" "$(derive main TAG_PREFIX=a..b-)"
+  assert X2n "$n_before" "$(git tag | wc -l | tr -d ' ')" )
 
 echo ""
 P="$(wc -l < "$PASS_F" | tr -d ' ')"; F="$(wc -l < "$FAIL_F" | tr -d ' ')"

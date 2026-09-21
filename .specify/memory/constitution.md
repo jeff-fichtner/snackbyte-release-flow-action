@@ -1,6 +1,24 @@
 <!--
 Sync Impact Report
 ==================
+Version change: 1.0.0 → 1.1.0 (2026-09-21, feature 004-tag-prefix)
+Rationale: MINOR — Principle III materially expanded. The tag format gains an optional tag
+NAMESPACE prefix (`${tagPrefix}v…`, default empty) so a repository can hold more than one
+releasable; reuse and max are computed within a namespace. Within a namespace the format and
+the one-rule derivation are unchanged. The Additional Constraints inputs list gains `tag-prefix`
+(and, catching up, `version-strategy` from 002).
+
+Principles modified:
+  III. Fixed, Derived Tag Format — optional namespace prefix; max/reuse per namespace.
+
+Templates requiring updates:
+  ✅ .specify/templates/plan-template.md — Constitution Check references this file generically.
+  ✅ .specify/templates/spec-template.md — no mandatory-section conflict.
+  ✅ .specify/templates/tasks-template.md — no change.
+
+Follow-up TODOs: none.
+
+--- previous report (1.0.0) ---
 Version change: (none) → 1.0.0
 Rationale: Initial ratification. First concrete constitution replacing the template stub.
 
@@ -63,18 +81,25 @@ key that expresses "same source, therefore same build."
 
 ### III. Fixed, Derived Tag Format (NON-NEGOTIABLE)
 
-The tag format MUST be exactly `v${MAJOR}.${MINOR}.${PATCH}${tagSuffix}`.
+The tag format MUST be exactly `${tagPrefix}v${MAJOR}.${MINOR}.${PATCH}${tagSuffix}`, where
+`tagPrefix` is the optional **tag namespace** (the `tag-prefix` input; default `""`, giving the
+bare `v…` form).
 - `MAJOR.MINOR` MUST come from `package.json` (or the `major-minor` input), never from a
   tag.
-- `PATCH` MUST be a global, monotonic build id: reuse per Principle II, otherwise
-  `max(PATCH over ALL vMM.* tags, across every suffix) + 1`.
+- `PATCH` MUST be a global, monotonic build id within its namespace: reuse per Principle II,
+  otherwise `max(PATCH over ALL <prefix>vMM.* tags in this namespace, across every suffix) + 1`.
 - Taking the max over every suffix makes two commits sharing a number impossible. Gaps in
   the PATCH sequence are expected and correct for a build id and MUST NOT be treated as
   errors.
+- A namespace MUST be blind to every other namespace: a derivation reads only tags carrying
+  its exact prefix (anchored), and the un-prefixed namespace reads only bare `v…` tags. A
+  repository holding more than one releasable gives each its own prefix; nothing else changes.
 
 Rationale: A single, mechanical format with one derivation rule for every environment is
 what lets the manifest stay a one-row edit (Principle IV). Any per-environment special
-casing of the format breaks that guarantee.
+casing of the format breaks that guarantee. The namespace prefix exists so a second
+releasable in the same repository does not corrupt the first's numbers; within a namespace
+the rule is unchanged.
 
 ### IV. The Manifest Is the Product (One-Row Edit)
 
@@ -134,8 +159,9 @@ is permitted but MUST be warned (their tags become indistinguishable).
 
 **Inputs / outputs (intended `action.yml`).** Inputs: `branch` (default
 `github.ref_name`), `manifest` (path or inline JSON, default `./environments.json`),
-`major-minor` (default: read `package.json`). Outputs: `is-env` (resolve-env result),
-`version` (`MM.P`), `tag` (`vMM.P<suffix>`).
+`major-minor` (default: read `package.json`), `version-strategy` (`build-id` default |
+`package-json`), `tag-prefix` (default `""`). Outputs: `is-env` (resolve-env result),
+`version` (`MM.P`, never prefixed), `tag` (`<prefix>vMM.P<suffix>`).
 
 ## Development Workflow
 
@@ -164,4 +190,4 @@ Versioning policy (semantic):
 Compliance: every plan's Constitution Check and every PR review MUST verify conformance to
 these principles. Any deviation MUST be justified in writing or the change MUST be revised.
 
-**Version**: 1.0.0 | **Ratified**: 2026-07-06 | **Last Amended**: 2026-07-06
+**Version**: 1.1.0 | **Ratified**: 2026-07-06 | **Last Amended**: 2026-09-21

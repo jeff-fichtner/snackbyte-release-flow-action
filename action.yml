@@ -32,6 +32,15 @@ inputs:
       libraries (intentional SemVer).
     required: false
     default: "build-id"
+  tag-prefix:
+    description: >-
+      Optional tag-namespace prefix, e.g. 'client-node-'. Use it when a repository holds more than
+      one releasable: the tag becomes <prefix>v<version><suffix>, and the derivation reads only
+      tags carrying this exact prefix (un-prefixed tags and other prefixes are invisible to it).
+      Empty (default) keeps the bare 'v' tags. Allowed: [A-Za-z0-9._-], starting alphanumeric and
+      ending in '-'; anything else is refused. The 'version' output never carries the prefix.
+    required: false
+    default: ""
 
 outputs:
   is-env:
@@ -41,7 +50,7 @@ outputs:
     description: "The derived MM.P version (set only for an environment push)."
     value: ${{ steps.derive.outputs.version }}
   tag:
-    description: "The derived vMM.P<suffix> tag (set only for an environment push)."
+    description: "The derived <prefix>vMM.P<suffix> tag (set only for an environment push)."
     value: ${{ steps.derive.outputs.tag }}
 
 runs:
@@ -62,4 +71,5 @@ runs:
         MANIFEST: ${{ inputs.manifest }}
         MAJOR_MINOR: ${{ inputs.major-minor }}
         VERSION_STRATEGY: ${{ inputs.version-strategy }}
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
       run: bash "$GITHUB_ACTION_PATH/scripts/derive-version.sh" "${{ inputs.branch }}"
