@@ -20,7 +20,8 @@
 # override, MAJOR_MINOR default) — see specs/001-extract-release-flow/contracts/versioning.md.
 # Rows S1-S7/BD-default/X1 are the version-strategy rows (feature 002). Rows T1-T8/TP-default/X2
 # (tag prefix) and PJ-default/PJ1-PJ2/X3 (package-json path) are feature 004's — see
-# specs/004-tag-prefix/contracts/versioning.md.
+# specs/004-tag-prefix/contracts/versioning.md. Rows R1-R4 are feature 005's self-healing reuse
+# after a duplicated build id — see specs/005-build-id-race/contracts/versioning.md.
 set -uo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/derive-version.sh"
@@ -98,12 +99,26 @@ derive_out() {
   fi
 }
 
+# derive_log: like derive, but prints the run's DIAGNOSTIC output (stdout+stderr) instead of the
+# tag — for rows asserting the duplicate-build-id annotation. It must capture stdout, not just
+# stderr: GitHub reads workflow commands (`::warning::`) from stdout, so that is where
+# derive-version.sh emits the annotation (via fd 3, to stay out of the candidate stream).
+derive_log() {
+  local branch="$1"; shift
+  local gho
+  gho="$(mktemp)"
+  GITHUB_OUTPUT="$gho" env "$@" "$SCRIPT" "$branch" 2>&1 || true
+}
+
+# tree_of <rev-or-tag> -> the tree hash, for rows asserting a pre-existing tag was left alone.
+tree_of() { git rev-parse "${1}^{tree}"; }
+
 # assert <row> <expected> <actual> — counters live in files so subshell results propagate.
 assert() {
   if [ "$2" = "$3" ]; then echo x >> "$PASS_F"; printf '  ok   %-4s expected %-16s\n' "$1" "$2"
   else echo x >> "$FAIL_F"; printf '  FAIL %-4s expected %-16s got %s\n' "$1" "$2" "$3"; fi
 }
-export -f write_manifest fresh_repo commit derive derive_out assert
+export -f write_manifest fresh_repo commit derive derive_out derive_log tree_of assert
 
 echo "Deriving against package.json MAJOR.MINOR = ${PKG_MM} (stand-ins P/'' A/-a C/-c)"
 
@@ -468,6 +483,78 @@ W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
   assert X3a "FAIL" "$(derive main PACKAGE_JSON=does/not/exist.json)"
   assert X3b "FAIL" "$(derive main VERSION_STRATEGY=package-json PACKAGE_JSON=does/not/exist.json)"
   assert X3n "0" "$(git tag | wc -l | tr -d ' ')" )
+
+# ------------------------------------------------------------------------------------------------
+# Self-healing reuse after a duplicated build id (feature 005) — see
+# specs/005-build-id-race/contracts/versioning.md.
+#
+# NOT TESTED HERE, and deliberately so: the RACE itself. Two derivations concurrently reading the
+# tag set before either pushes is not reachable from a shell harness. Its resulting STATE is fully
+# constructible with `git tag`, and that is what these rows assert. The concurrency group that
+# PREVENTS the race is verified by inspection of CONSUMING.md and .github/workflows/release.yml.
+#
+# The state every row below starts from is the observed one (issue #3): two trees were each given
+# build id 2 by runs that raced — one bare, one suffixed.
+# ------------------------------------------------------------------------------------------------
+
+# R1 — the reported wedge heals. Tree A owns bare v0.1.2; HEAD's tree owns v0.1.2-a. Reusing 2
+#   would derive v0.1.2, which tree A already holds, and the guard would refuse forever. Expect the
+#   candidate to be skipped and a fresh number minted instead.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "v${PKG_MM}.2" -m x        # tree A — bare 2
+  commit; git tag -a "v${PKG_MM}.2-a" -m x      # tree B (HEAD) — -a 2, the race's other half
+  assert R1 "v${PKG_MM}.3" "$(derive main)" )
+
+# R1w — the heal is ANNOUNCED. The annotation is the only thing keeping a healed race visible on an
+#   otherwise green run, so its absence must fail a row.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "v${PKG_MM}.2" -m x
+  commit; git tag -a "v${PKG_MM}.2-a" -m x
+  log="$(derive_log main)"
+  case "$log" in *"::warning title=Duplicate build id"*) w=yes ;; *) w=no ;; esac
+  case "$log" in *"v${PKG_MM}.2"*) t=yes ;; *) t=no ;; esac
+  assert R1w "yes|yes" "${w}|${t}" )
+
+# R1t — the heal DESTROYS NOTHING: both pre-existing tags still point where they did (Constitution I
+#   / FR-005 — tag-only, create-only; no delete, no move, no force).
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "v${PKG_MM}.2" -m x;   before_bare="$(tree_of "v${PKG_MM}.2")"
+  commit; git tag -a "v${PKG_MM}.2-a" -m x; before_a="$(tree_of "v${PKG_MM}.2-a")"
+  derive main >/dev/null
+  assert R1t "${before_bare}|${before_a}" "$(tree_of "v${PKG_MM}.2")|$(tree_of "v${PKG_MM}.2-a")" )
+
+# R2 — a FREE target still REUSES. The predicate is the TARGET tag, not "any tag with this number":
+#   pushing C from the same poisoned state targets v0.1.2-c, which nobody owns, so the number is
+#   reused and this tree keeps ONE build id across its environments. A broader predicate would mint
+#   0.1.3 here and split the tree across two numbers. This row is what pins the narrow form.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "v${PKG_MM}.2" -m x        # tree A — bare 2
+  commit; git tag -a "v${PKG_MM}.2-a" -m x      # tree B — -a 2
+  git checkout -q -b ccc                         # push C at tree B; its target v0.1.2-c is free
+  assert R2 "v${PKG_MM}.2-c" "$(derive ccc)" )
+
+# R3 — the HIGHEST STILL-USABLE candidate wins. HEAD's tree carries 1 (-a, bare target free) and
+#   2 (-c, bare target owned by tree A). Skipping the poisoned candidate must CONTINUE the scan, not
+#   bail to max+1: expect reuse of 1, not a fresh 3.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "v${PKG_MM}.2" -m x        # tree A owns bare 2
+  commit                                         # tree B (HEAD)
+  git tag -a "v${PKG_MM}.1-a" -m x               # candidate 1 — bare target free
+  git tag -a "v${PKG_MM}.2-c" -m x               # candidate 2 — bare target taken by tree A
+  assert R3 "v${PKG_MM}.1" "$(derive main)" )
+
+# R4 — the heal is NAMESPACE-ANCHORED: R1 inside a prefixed namespace behaves identically.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "${PFX}v${PKG_MM}.2" -m x
+  commit; git tag -a "${PFX}v${PKG_MM}.2-a" -m x
+  assert R4 "${PFX}v${PKG_MM}.3" "$(derive main TAG_PREFIX="$PFX")" )
+
+# R4' — a BARE tag never poisons a PREFIXED candidate. The other namespace is invisible, so the
+#   prefixed target is free and the number is reused (not healed away).
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "v${PKG_MM}.2" -m x         # tree A — BARE 2, a different namespace
+  commit; git tag -a "${PFX}v${PKG_MM}.2-a" -m x # tree B (HEAD) — prefixed 2
+  assert R4p "${PFX}v${PKG_MM}.2" "$(derive main TAG_PREFIX="$PFX")" )
 
 echo ""
 P="$(wc -l < "$PASS_F" | tr -d ' ')"; F="$(wc -l < "$FAIL_F" | tr -d ' ')"

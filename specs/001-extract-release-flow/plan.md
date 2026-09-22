@@ -52,6 +52,8 @@ once — linear in tag count, negligible at real repo scale.
 **Constraints**: Tag-only (never a commit/branch push); refuse shallow clones; anchored-regex
 tag parsing; fail-loud on existing target tag / unknown branch; same-branch run serialization
 is the consumer's workflow concurrency concern (documented, not enforced in-script).
+[Superseded by 005-build-id-race: serialization is per *releasable*, not per branch — a per-branch
+group lets `main` and `dev` race to one number. Left as written; this records 001 as delivered.]
 
 **Scale/Scope**: ~120-line derivation script + ~40-line resolve-env logic + `action.yml` +
 ~300 lines of ported tests. One manifest schema, five facets, one tag-format contract.

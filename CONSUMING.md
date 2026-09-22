@@ -112,8 +112,13 @@ One rule covers every environment:
    the number is stamped with this environment's suffix, so the same content ends up carrying both
    tags. A rebase that absorbs divergent changes yields a different tree and mints a new number.
 2. **Otherwise advance** to `max(all vMM.* tags) + 1`. The max is over **every** tag — every
-   suffix, every environment — so two distinct commits can never share a number. Collisions are
-   structurally impossible, for any number of environments.
+   suffix, every environment — so two distinct trees cannot share a number **provided the
+   derivations are serialized**. The tag scan and the tag push are not atomic: two runs that both
+   read the tag set before either pushes will both mint the same number. That is what the
+   concurrency group in every recipe below is for, and why it is keyed on the *releasable* rather
+   than the branch. Should a duplicate reach the tag set anyway, step 1 heals it — a number whose
+   tag for this environment already belongs to a different tree is skipped, with a warning
+   annotation, instead of being reused into a permanently wedged promotion.
 
 A fresh repo with no tags mints `vMM.0` on its first push, however many commits precede it.
 
@@ -161,8 +166,14 @@ on:
 permissions:
   contents: write
 concurrency:
-  group: release-${{ github.ref_name }}   # serialize per branch — no two pushes race to a number
+  # Per RELEASABLE, not per branch. Under build-id the number is global across every environment
+  # branch, so `release-${{ github.ref_name }}` would let a main push and a dev push race to the
+  # same number for different trees — and the duplicate wedges the next promotion.
+  group: release
   cancel-in-progress: false
+  queue: max                # NOT optional: without it only ONE run may be pending per group and a
+                            # newer run CANCELS the pending one, silently dropping that release.
+                            # Groups are repository-scoped, so pick a name no other workflow uses.
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -197,8 +208,9 @@ permissions:
   contents: write           # push the tag
   id-token: write           # if you publish to npm with provenance
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release            # per releasable (see Recipe A) — one group, every release channel
   cancel-in-progress: false
+  queue: max
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -299,8 +311,9 @@ on:
 permissions:
   contents: write
 concurrency:
-  group: release-service-${{ github.ref_name }}
-  cancel-in-progress: false
+  group: release-service           # keyed on the RELEASABLE (the app owns the bare `v` namespace), never on the branch.
+  cancel-in-progress: false  # Two releasables get two groups: their namespaces cannot collide,
+  queue: max                 # so they must NOT serialize against each other.
 defaults:
   run:
     working-directory: packages/service
@@ -333,8 +346,9 @@ permissions:
   contents: write
   id-token: write
 concurrency:
-  group: release-client-node-${{ github.ref_name }}
-  cancel-in-progress: false
+  group: release-client-node           # keyed on the RELEASABLE (keyed on the library's tag-prefix), never on the branch.
+  cancel-in-progress: false  # Two releasables get two groups: their namespaces cannot collide,
+  queue: max                 # so they must NOT serialize against each other.
 defaults:
   run:
     working-directory: packages/client-node

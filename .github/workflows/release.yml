@@ -14,10 +14,14 @@ on:
 permissions:
   contents: write
 
-# Serialize per branch so two pushes cannot race to the same build number.
+# Serialize per RELEASABLE — this block is Recipe A in CONSUMING.md and must stay identical to
+# it; this repo is the reference implementation of its own advice. The build id is global across
+# every environment branch, so a per-branch group would let main and dev race to the same number.
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release
   cancel-in-progress: false
+  queue: max # without this only ONE run may be pending per group; a newer run cancels the pending
+             # one, silently dropping that release.
 
 jobs:
   release:

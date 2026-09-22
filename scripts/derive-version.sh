@@ -16,9 +16,14 @@
 #      cleanly (all four leave main's tree identical to dev's). A rebase that also absorbs
 #      divergent main changes produces a DIFFERENT tree, so it correctly mints a new number.
 #   2. Otherwise advance to (highest patch among ALL vMM.* tags) + 1. Taking the max over every
-#      tag (every suffix, every environment) makes two distinct commits sharing a number
-#      impossible. The cost is gaps (a hotfix consumes a number, so another environment's next
-#      number skips ahead); that is correct for a build id.
+#      tag (every suffix, every environment) makes two distinct trees sharing a number impossible
+#      ONLY ACROSS SERIALIZED DERIVATIONS. This scan and the `git push` below are not atomic: two
+#      runs that both read the tag set before either pushes both mint the same number. The build id
+#      is global to the RELEASABLE, so the consuming workflow MUST put every environment branch of
+#      a releasable in ONE concurrency group (with queueing) — a per-branch group does not
+#      serialize main against dev. See CONSUMING.md; step 1 heals the residue when it happens
+#      anyway. The cost is gaps (a hotfix consumes a number, so another environment's next number
+#      skips ahead); that is correct for a build id.
 # The branch is used only as DATA (its suffix, looked up in the manifest). There is no
 # per-environment code path: the same reuse-or-mint runs for every environment.
 #
@@ -158,16 +163,52 @@ case "$VERSION_STRATEGY" in
     # mints a new number. We scan every <prefix>vMM.* tag, resolve each to its tree, and keep the
     # numbers whose tree matches HEAD's; the highest such number wins (matching the old --points-at
     # tie-break). (`git tag -l` matches the whole name, so the glob is prefix-anchored too.)
+    # The scan below reports duplicate build ids as a GitHub Actions ANNOTATION. Two constraints
+    # decide where it is written. Workflow commands are read from stdout, never stderr, so it
+    # cannot use the script's usual `>&2` diagnostic channel. But the loop's own stdout IS the
+    # candidate-number stream feeding `sort`, so writing there would corrupt the derivation. Bind
+    # fd 3 to the real stdout HERE — before the command substitution redirects stdout to its
+    # capture — and the annotation reaches the runner's log without entering the stream.
+    exec 3>&1
+
     HEAD_TREE="$(git rev-parse "HEAD^{tree}")"
     patch="$(
       git tag -l "${TAG_PREFIX}v${MM}.*" | while IFS= read -r t; do
         n="$(printf '%s\n' "$t" | sed -nE "s/${patch_re}/\1/p")"
-        if [ -n "$n" ]; then
-          # A tag may point at a tag object (annotated) or a commit; ^{tree} resolves both to the tree.
-          if [ "$(git rev-parse "${t}^{tree}" 2>/dev/null)" = "$HEAD_TREE" ]; then
-            printf '%s\n' "$n"
-          fi
+        [ -n "$n" ] || continue
+        # A tag may point at a tag object (annotated) or a commit; ^{tree} resolves both to the tree.
+        [ "$(git rev-parse "${t}^{tree}" 2>/dev/null)" = "$HEAD_TREE" ] || continue
+
+        # NOTE for editors: no apostrophes in comments between here and the closing `)` of this
+        # command substitution. bash 3.2 — the system bash on macOS, where this suite is run
+        # locally — treats one as an opening quote even inside a comment and the whole script
+        # fails to parse. Linux CI runs a newer bash and would not catch it.
+        #
+        # The number sits on OUR tree, but is it still free to use? The tag THIS environment would
+        # create for it may already belong to a DIFFERENT tree: the residue of two derivations that
+        # raced (see the header). Reusing such a number derives a tag that exists elsewhere, so the
+        # guard below refuses and every re-run repeats the same refusal — the promotion stays wedged
+        # until a human deletes a tag. Skip the candidate and keep scanning instead, so the highest
+        # STILL-USABLE number wins rather than burning a fresh one.
+        #
+        # The test is the TARGET tag specifically, not "any tag carrying this number". An absent
+        # target is ordinary reuse. A target already on our OWN tree is a genuine re-run: it must
+        # still be reused here so that it reaches the exists-guard below and fails loudly ("already
+        # released"). Rejecting on any tag bearing the number would also fire when the target is
+        # free, which in a repository with three environments would give one tree two different
+        # build ids — the very inconsistency this heal exists to prevent.
+        # `-q --verify` is load-bearing: a bare `git rev-parse <missing-ref>^{tree}` ECHOES its
+        # argument back on stdout and exits 0, so an absent target would read as "owned by some
+        # other tree" and every ordinary reuse would be healed away into a fresh number.
+        target="${TAG_PREFIX}v${MM}.${n}${suffix}"
+        target_tree="$(git rev-parse -q --verify "${target}^{tree}" 2>/dev/null || true)"
+        if [ -n "$target_tree" ] && [ "$target_tree" != "$HEAD_TREE" ]; then
+          printf '::warning title=Duplicate build id::Build id %s.%s is tagged on this tree, but %s already belongs to a different tree — concurrent releases minted the number twice. Not reusing it. Serialize releases per releasable: one concurrency group per tag namespace, with queueing (see CONSUMING.md).\n' \
+            "$MM" "$n" "$target" >&3
+          continue
         fi
+
+        printf '%s\n' "$n"
       done | sort -n | tail -1
     )"
 
