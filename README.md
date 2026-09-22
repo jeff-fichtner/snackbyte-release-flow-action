@@ -199,12 +199,15 @@ tags. One rule, every environment:
   merges, squashes, or rebases cleanly (all leave the tree identical). A rebase that
   absorbs divergent changes yields a *different* tree and correctly mints a new number.
 - **Advance** — otherwise `max(patch over ALL vMM.* tags) + 1`. Max over every suffix
-  makes two commits sharing a number impossible; gaps are expected and correct for a
-  build id.
+  makes two trees sharing a number impossible *across serialized derivations* — the scan
+  and the tag push are not atomic, so the consuming workflow must serialize every
+  environment branch of a releasable in one concurrency group (see CONSUMING.md). Reuse
+  heals a duplicate that slips through. Gaps are expected and correct for a build id.
 
 CI creates a **tag only** — never a commit or branch push. Guards: fail-loud on an
 existing target tag, refuse shallow clones (they hide tags), anchored regex parsing,
-same-branch run serialization.
+per-releasable run serialization (one concurrency group per tag namespace, with
+queueing), and a self-healing reuse that skips a build id another tree already owns.
 
 ## Related reusable patterns (observed, NOT extracted here)
 

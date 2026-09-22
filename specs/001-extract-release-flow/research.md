@@ -96,3 +96,7 @@ and matches the source, avoiding a translation that could silently drop a matrix
   delivery mechanics) — candidate 002.
 - Consumer-side workflow concurrency (same-branch serialization) is documented guidance for
   consumers, not enforced inside the Action.
+  > **Superseded by 005-build-id-race.** "Same-branch" is the wrong granularity: the build id is
+  > global to the *releasable*, so a per-branch group lets `main` and `dev` race. Serialization is
+  > now specified per tag namespace, and the derivation heals a duplicate that slips through.
+  > Left as written — this records 001 as delivered.

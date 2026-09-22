@@ -1,6 +1,31 @@
 <!--
 Sync Impact Report
 ==================
+Version change: 1.1.0 → 1.2.0 (2026-09-22, feature 005-build-id-race)
+Rationale: MINOR — guidance materially expanded after production falsified a stated invariant
+(issue #3). Principle III asserted that taking the max over every suffix makes two commits
+sharing a number IMPOSSIBLE; that holds only across SERIALIZED derivations, because the tag
+scan and the tag push are not atomic. Principle V's serialization guard said "same branch",
+which is the wrong granularity — the build id is global to the RELEASABLE, so a per-branch
+group lets `main` and `dev` race, and the resulting duplicate permanently wedges the next
+promotion. III now states the precondition and requires reuse to skip a number owned by
+another tree; V now requires one group per tag namespace, queueing, and a visible annotation
+when a duplicate is healed. No principle removed or redefined, hence MINOR not MAJOR.
+
+Principles modified:
+  III. Fixed, Derived Tag Format — invariant gains its serialization precondition; reuse must
+       skip a candidate whose target tag belongs to a different tree.
+  V.  Fail Loud — serialization guard restated per-releasable (was per-branch); adds the
+       queueing requirement and the heal-must-be-visible rule.
+
+Templates requiring updates:
+  ✅ .specify/templates/plan-template.md — Constitution Check references this file generically.
+  ✅ .specify/templates/spec-template.md — no mandatory-section conflict.
+  ✅ .specify/templates/tasks-template.md — no change.
+
+Follow-up TODOs: none.
+
+--- previous report (1.1.0) ---
 Version change: 1.0.0 → 1.1.0 (2026-09-21, feature 004-tag-prefix)
 Rationale: MINOR — Principle III materially expanded. The tag format gains an optional tag
 NAMESPACE prefix (`${tagPrefix}v…`, default empty) so a repository can hold more than one
@@ -89,9 +114,14 @@ bare `v…` form).
   tag.
 - `PATCH` MUST be a global, monotonic build id within its namespace: reuse per Principle II,
   otherwise `max(PATCH over ALL <prefix>vMM.* tags in this namespace, across every suffix) + 1`.
-- Taking the max over every suffix makes two commits sharing a number impossible. Gaps in
-  the PATCH sequence are expected and correct for a build id and MUST NOT be treated as
-  errors.
+- Taking the max over every suffix makes two trees sharing a number impossible **across
+  serialized derivations only**. The tag scan and the tag push are NOT atomic: two runs that
+  both read the tag set before either pushes will both mint the same number, for different
+  trees. Serialization is therefore a mandatory guard, not an optimization (Principle V), and
+  reuse MUST heal the residue when it happens anyway — a candidate number whose target tag is
+  owned by a different tree MUST be skipped, not reused.
+- Gaps in the PATCH sequence are expected and correct for a build id and MUST NOT be treated
+  as errors.
 - A namespace MUST be blind to every other namespace: a derivation reads only tags carrying
   its exact prefix (anchored), and the un-prefixed namespace reads only bare `v…` tags. A
   repository holding more than one releasable gives each its own prefix; nothing else changes.
@@ -120,7 +150,14 @@ guards:
 - Refuse to overwrite an already-existing target tag (fail, do not force).
 - Refuse shallow clones — they hide tags and would corrupt the max/reuse computation.
 - Parse tags with anchored regexes only; a near-match MUST NOT be silently accepted.
-- Serialize runs on the same branch so two pushes cannot race to the same number.
+- Serialize runs per **releasable** — ONE concurrency group per tag namespace, covering every
+  environment branch of that releasable. The number is global to the namespace, so a per-branch
+  group does NOT serialize `main` against `dev` and they will race to the same number. The group
+  MUST also allow queueing (`queue: max`): a platform that holds only one pending run per group
+  cancels the pending one when a newer run arrives, turning the fix into a silently dropped
+  release. Two DIFFERENT releasables MUST NOT share a group — their namespaces cannot collide.
+- When a duplicate number reaches the tag set regardless, reuse MUST skip it and say so
+  visibly (an annotation, not only stderr) rather than deriving a number another tree owns.
 - A push to a branch not listed in the manifest MUST be rejected by derivation and
   short-circuited by resolve-env — never assigned a default environment.
 
@@ -192,4 +229,4 @@ Versioning policy (semantic):
 Compliance: every plan's Constitution Check and every PR review MUST verify conformance to
 these principles. Any deviation MUST be justified in writing or the change MUST be revised.
 
-**Version**: 1.1.0 | **Ratified**: 2026-07-06 | **Last Amended**: 2026-09-21
+**Version**: 1.2.0 | **Ratified**: 2026-07-06 | **Last Amended**: 2026-09-22
