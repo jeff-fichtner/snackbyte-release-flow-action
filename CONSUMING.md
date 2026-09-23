@@ -171,9 +171,8 @@ concurrency:
   # same number for different trees — and the duplicate wedges the next promotion.
   group: release
   cancel-in-progress: false
-  # NOT optional: without it only ONE run may be pending per group, and a newer run CANCELS the
-  # one already waiting — turning the race into a silently dropped release.
-  queue: max
+  queue: max                # let runs wait their turn. Without this GitHub keeps only ONE run
+                            # waiting, and the next push throws it out — losing that release.
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -200,9 +199,7 @@ derives the PATCH. Push to `main` → `v1.4.0`, next distinct build → `v1.4.1`
 > if you split this workflow in two (say `release.yml` and `release-dev.yml`), keep both on the
 > *same* group name.
 >
-> `queue: max` holds up to **100** waiting runs; past that, further runs are cancelled — the same
-> dropped release it was added to prevent. That ceiling is far beyond any real burst, but it is a
-> ceiling, not an infinity.
+> (`queue: max` can hold 100 waiting runs. You will not hit that.)
 
 ---
 
