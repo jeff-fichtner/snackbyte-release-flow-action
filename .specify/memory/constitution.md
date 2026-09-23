@@ -156,11 +156,9 @@ guards:
 - Serialize runs per **releasable** — ONE concurrency group per tag namespace, covering every
   environment branch of that releasable. The number is global to the namespace, so a per-branch
   group does NOT serialize `main` against `dev` and they will race to the same number. The
-  serialization MUST NOT drop a release it defers: a mechanism that admits only one waiting run,
-  and discards the one already waiting when another arrives, converts the race into a silently
-  skipped release and is not acceptable as-is. Two different releasables MAY share a group — it
-  costs only wall-clock, since their namespaces cannot collide — but one releasable MUST NOT be
-  split across two groups, which is the original defect restated.
+  group MUST let runs WAIT: if a run is held back, it MUST actually run later, never be thrown
+  away. Two different releasables MAY share a group (it only costs time); one releasable MUST NOT
+  be split across two groups, which is this defect all over again.
 - When a duplicate number reaches the tag set regardless, reuse MUST skip it and say so
   visibly (an annotation, not only stderr) rather than deriving a number another tree owns.
 - A push to a branch not listed in the manifest MUST be rejected by derivation and

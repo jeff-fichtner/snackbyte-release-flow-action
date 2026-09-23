@@ -20,8 +20,7 @@ permissions:
 concurrency:
   group: release
   cancel-in-progress: false
-  queue: max # without this only ONE run may be pending per group; a newer run cancels the pending
-             # one, silently dropping that release.
+  queue: max # let runs wait their turn; without it a queued release can be thrown away
 
 jobs:
   release:
