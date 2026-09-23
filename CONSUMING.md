@@ -199,6 +199,10 @@ derives the PATCH. Push to `main` → `v1.4.0`, next distinct build → `v1.4.1`
 > one — **one releasable split across two groups**, which is exactly the bug this recipe fixes. So
 > if you split this workflow in two (say `release.yml` and `release-dev.yml`), keep both on the
 > *same* group name.
+>
+> `queue: max` holds up to **100** waiting runs; past that, further runs are cancelled — the same
+> dropped release it was added to prevent. That ceiling is far beyond any real burst, but it is a
+> ceiling, not an infinity.
 
 ---
 
