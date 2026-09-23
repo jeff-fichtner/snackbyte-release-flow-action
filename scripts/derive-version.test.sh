@@ -490,12 +490,15 @@ W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
 #   script then fails to parse. A newer bash does not, so Linux CI would stay green while every
 #   local run died with a cryptic "unexpected EOF". Assert the step-1 substitution carries no
 #   apostrophe in any comment line, on whatever platform this suite runs.
-bad="$(awk '
-  /^    patch="\$\($/ { inside = 1; next }
-  inside && /^    \)"$/ { exit }
-  inside && /^[[:space:]]*#/ && /'"'"'/ { print NR": "$0 }
+#   The row also asserts the anchor MATCHED: if the substitution is ever reindented, an
+#   anchor-only check would silently pass forever and the guard would be dead.
+scan="$(awk '
+  /^    patch="\$\($/ { inside = 1; found = 1; next }
+  inside && /^    \)"$/ { inside = 0 }
+  inside && /^[[:space:]]*#/ && /'"'"'/ { bad = bad " " NR }
+  END { print (found ? "found" : "ANCHOR-NOT-MATCHED") "|" bad }
 ' "$(dirname "$SCRIPT")/derive-version.sh")"
-assert PORT1 "" "$bad"
+assert PORT1 "found|" "$scan"
 
 # ------------------------------------------------------------------------------------------------
 # Self-healing reuse after a duplicated build id (feature 005) — see
@@ -534,7 +537,11 @@ W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
   commit; git tag -a "v${PKG_MM}.2" -m x;   before_bare="$(tree_of "v${PKG_MM}.2")"
   commit; git tag -a "v${PKG_MM}.2-a" -m x; before_a="$(tree_of "v${PKG_MM}.2-a")"
   derive main >/dev/null
-  assert R1t "${before_bare}|${before_a}" "$(tree_of "v${PKG_MM}.2")|$(tree_of "v${PKG_MM}.2-a")" )
+  # The tag SET is part of the assertion: without it the row passes when the derivation fails
+  # outright and writes nothing, which is the opposite of what it claims to prove.
+  after="$(git tag | sort | tr '\n' ',')"
+  assert R1t "${before_bare}|${before_a}|v${PKG_MM}.2,v${PKG_MM}.2-a,v${PKG_MM}.3," \
+             "$(tree_of "v${PKG_MM}.2")|$(tree_of "v${PKG_MM}.2-a")|${after}" )
 
 # R2 — a FREE target still REUSES. The predicate is the TARGET tag, not "any tag with this number":
 #   pushing C from the same poisoned state targets v0.1.2-c, which nobody owns, so the number is

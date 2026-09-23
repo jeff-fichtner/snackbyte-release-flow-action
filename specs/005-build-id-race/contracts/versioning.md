@@ -27,7 +27,7 @@ moved, or force-updated.
 |---|---|---|---|---|
 | R1 | the reported wedge heals | tree A: `vMM.2`; tree B: `vMM.2-a` | P at tree B | `vMM.3` (today: **FAIL**) |
 | R1w | the heal is announced | as R1 | P at tree B | stderr contains `::warning` and the number `MM.2` |
-| R1t | the heal destroys nothing | as R1 | P at tree B | `vMM.2` and `vMM.2-a` still present, still on their original trees |
+| R1t | the heal destroys nothing *while healing* | as R1 | P at tree B | `vMM.2` and `vMM.2-a` still on their original trees, AND the tag set is exactly those two plus the new `vMM.3` — the tag set is asserted because without it the row passes when the derivation fails and writes nothing |
 | R2 | a FREE target still reuses (narrow predicate) | tree A: `vMM.2`; tree B: `vMM.2-a` | C at tree B | `vMM.2-c` — **not** `vMM.3` |
 | R3 | highest **usable** candidate wins | tree A: `vMM.2`; tree B carries `vMM.1-a` AND `vMM.2-c` | P at tree B | `vMM.1` — not `vMM.3`, not `vMM.2` |
 | R4 | the heal is namespace-anchored | tree A: `PFXvMM.2`; tree B: `PFXvMM.2-a` | P at tree B, prefix | `PFXvMM.3` |
@@ -37,7 +37,7 @@ moved, or force-updated.
 
 | Row | Behavior | Expected |
 |---|---|---|
-| PORT1 | no apostrophe in any COMMENT line inside the step-1 command substitution — bash 3.2 (macOS system bash) reads one as an opening quote and the script fails to parse, while a newer bash (Linux CI) does not | empty |
+| PORT1 | no apostrophe in any COMMENT line inside the step-1 command substitution — bash 3.2 (macOS system bash) reads one as an opening quote and the script fails to parse, while a newer bash (Linux CI) does not. Also asserts the scan ANCHOR matched, so reindenting the substitution cannot silently retire the guard | `found\|` |
 
 ## regression guards (existing rows, must pass unchanged)
 

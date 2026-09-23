@@ -84,9 +84,15 @@ restate it, the rows prove it, the bump ships it.
 ## Implementation notes (things the plan did not predict)
 
 - **`git rev-parse -q --verify` is load-bearing.** A bare `git rev-parse <missing-ref>^{tree}`
-  echoes its argument back on stdout and exits 0, so an absent target tag read as "owned by another
-  tree" and every ordinary reuse was healed away into a fresh number. Caught immediately by the
-  existing rows — B4, B5, B6a/B6c, B14, B15, T5 all failed before R2/R3/R4' did.
+  PRINTS the unresolved argument to stdout before failing (exit 128). The `|| true` required to
+  survive that failure under `set -e` also swallows the exit code, so the echoed string landed in
+  `target_tree`: every absent target read as "owned by another tree" and every ordinary reuse was
+  healed away into a fresh number. Caught immediately by the existing rows — B4, B5, B6a/B6c, B14,
+  B15, T5 all failed before R2/R3/R4' did.
+  (Measured 2026-09-22. An earlier note in this file said "exits 0"; that was a mis-measurement —
+  the `$?` being read belonged to the enclosing `echo`, not to git. The fix is unchanged; the
+  reason is not. The bottom exists-guard uses the exit code directly, with no `|| true`, and was
+  verified to behave correctly on a missing tag.)
 - **No apostrophes in comments inside the step-1 command substitution.** bash 3.2 (the system bash
   on macOS, where the suite runs locally) treats one as an opening quote even inside a comment, and
   the whole script fails to parse. Linux CI runs a newer bash and would NOT have caught it. A note

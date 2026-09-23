@@ -196,9 +196,12 @@ case "$VERSION_STRATEGY" in
         # released"). Rejecting on any tag bearing the number would also fire when the target is
         # free, which in a repository with three environments would give one tree two different
         # build ids — the very inconsistency this heal exists to prevent.
-        # `-q --verify` is load-bearing: a bare `git rev-parse <missing-ref>^{tree}` ECHOES its
-        # argument back on stdout and exits 0, so an absent target would read as "owned by some
-        # other tree" and every ordinary reuse would be healed away into a fresh number.
+        # `-q --verify` is load-bearing. A bare `git rev-parse <missing-ref>^{tree}` still PRINTS
+        # the unresolved argument to stdout before failing (exit 128), and the `|| true` needed to
+        # survive that failure under `set -e` also swallows the exit code — so the echoed string
+        # lands in target_tree, every absent target reads as "owned by some other tree", and every
+        # ordinary reuse is healed away into a fresh number. `-q` suppresses the echo and
+        # `--verify` demands a single resolved ref, so a miss yields the empty string.
         target="${TAG_PREFIX}v${MM}.${n}${suffix}"
         target_tree="$(git rev-parse -q --verify "${target}^{tree}" 2>/dev/null || true)"
         if [ -n "$target_tree" ] && [ "$target_tree" != "$HEAD_TREE" ]; then
