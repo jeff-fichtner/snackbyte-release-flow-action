@@ -21,7 +21,8 @@
 # Rows S1-S7/BD-default/X1 are the version-strategy rows (feature 002). Rows T1-T8/TP-default/X2
 # (tag prefix) and PJ-default/PJ1-PJ2/X3 (package-json path) are feature 004's — see
 # specs/004-tag-prefix/contracts/versioning.md. Rows R1-R4 are feature 005's self-healing reuse
-# after a duplicated build id — see specs/005-build-id-race/contracts/versioning.md.
+# after a duplicated build id, and PORT1 is its portability guard — see
+# specs/005-build-id-race/contracts/versioning.md.
 set -uo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/derive-version.sh"
@@ -483,6 +484,18 @@ W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
   assert X3a "FAIL" "$(derive main PACKAGE_JSON=does/not/exist.json)"
   assert X3b "FAIL" "$(derive main VERSION_STRATEGY=package-json PACKAGE_JSON=does/not/exist.json)"
   assert X3n "0" "$(git tag | wc -l | tr -d ' ')" )
+
+# PORT1 — a portability guard, not a behavior row. bash 3.2 (the system bash on macOS) treats an
+#   apostrophe inside a COMMENT inside a command substitution as an opening quote, and the whole
+#   script then fails to parse. A newer bash does not, so Linux CI would stay green while every
+#   local run died with a cryptic "unexpected EOF". Assert the step-1 substitution carries no
+#   apostrophe in any comment line, on whatever platform this suite runs.
+bad="$(awk '
+  /^    patch="\$\($/ { inside = 1; next }
+  inside && /^    \)"$/ { exit }
+  inside && /^[[:space:]]*#/ && /'"'"'/ { print NR": "$0 }
+' "$(dirname "$SCRIPT")/derive-version.sh")"
+assert PORT1 "" "$bad"
 
 # ------------------------------------------------------------------------------------------------
 # Self-healing reuse after a duplicated build id (feature 005) — see

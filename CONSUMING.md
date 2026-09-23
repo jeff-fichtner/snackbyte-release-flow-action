@@ -171,9 +171,9 @@ concurrency:
   # same number for different trees — and the duplicate wedges the next promotion.
   group: release
   cancel-in-progress: false
-  queue: max                # NOT optional: without it only ONE run may be pending per group and a
-                            # newer run CANCELS the pending one, silently dropping that release.
-                            # Groups are repository-scoped, so pick a name no other workflow uses.
+  # NOT optional: without it only ONE run may be pending per group, and a newer run CANCELS the
+  # one already waiting — turning the race into a silently dropped release.
+  queue: max
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -192,6 +192,13 @@ jobs:
 
 `package.json` supplies only MAJOR.MINOR (e.g. `"version": "1.4.0"` → the `1.4` line); the Action
 derives the PATCH. Push to `main` → `v1.4.0`, next distinct build → `v1.4.1`, etc.
+
+> **On the group name.** Concurrency groups are scoped to the *repository*, so `release` is shared
+> with any other workflow that happens to use it. If that happens, err toward leaving it shared:
+> two unrelated things serializing costs only wall-clock. The failure that matters is the opposite
+> one — **one releasable split across two groups**, which is exactly the bug this recipe fixes. So
+> if you split this workflow in two (say `release.yml` and `release-dev.yml`), keep both on the
+> *same* group name.
 
 ---
 
@@ -311,9 +318,11 @@ on:
 permissions:
   contents: write
 concurrency:
-  group: release-service           # keyed on the RELEASABLE (the app owns the bare `v` namespace), never on the branch.
-  cancel-in-progress: false  # Two releasables get two groups: their namespaces cannot collide,
-  queue: max                 # so they must NOT serialize against each other.
+  # One group per RELEASABLE, never per branch. The app and the library get SEPARATE groups:
+  # their tag namespaces cannot collide, so neither should ever wait on the other.
+  group: release-service    # the app owns the bare `v…` namespace
+  cancel-in-progress: false
+  queue: max
 defaults:
   run:
     working-directory: packages/service
@@ -346,9 +355,10 @@ permissions:
   contents: write
   id-token: write
 concurrency:
-  group: release-client-node           # keyed on the RELEASABLE (keyed on the library's tag-prefix), never on the branch.
-  cancel-in-progress: false  # Two releasables get two groups: their namespaces cannot collide,
-  queue: max                 # so they must NOT serialize against each other.
+  # The library's own group — separate from the app's, per the note in release-service.yml.
+  group: release-client-node   # keyed to this releasable, whose namespace is `client-node-v…`
+  cancel-in-progress: false
+  queue: max
 defaults:
   run:
     working-directory: packages/client-node

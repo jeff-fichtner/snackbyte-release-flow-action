@@ -171,6 +171,10 @@ case "$VERSION_STRATEGY" in
     # capture — and the annotation reaches the runner's log without entering the stream.
     exec 3>&1
 
+    # NOTE for editors: NO APOSTROPHES in any comment inside the command substitution below, up to
+    # its closing `)`. bash 3.2 — the system bash on macOS, where this suite is run locally —
+    # treats one as an opening quote even inside a comment, and the whole script then fails to
+    # parse. Linux CI runs a newer bash and will NOT catch it for you.
     HEAD_TREE="$(git rev-parse "HEAD^{tree}")"
     patch="$(
       git tag -l "${TAG_PREFIX}v${MM}.*" | while IFS= read -r t; do
@@ -179,11 +183,6 @@ case "$VERSION_STRATEGY" in
         # A tag may point at a tag object (annotated) or a commit; ^{tree} resolves both to the tree.
         [ "$(git rev-parse "${t}^{tree}" 2>/dev/null)" = "$HEAD_TREE" ] || continue
 
-        # NOTE for editors: no apostrophes in comments between here and the closing `)` of this
-        # command substitution. bash 3.2 — the system bash on macOS, where this suite is run
-        # locally — treats one as an opening quote even inside a comment and the whole script
-        # fails to parse. Linux CI runs a newer bash and would not catch it.
-        #
         # The number sits on OUR tree, but is it still free to use? The tag THIS environment would
         # create for it may already belong to a DIFFERENT tree: the residue of two derivations that
         # raced (see the header). Reusing such a number derives a tag that exists elsewhere, so the
@@ -211,6 +210,8 @@ case "$VERSION_STRATEGY" in
         printf '%s\n' "$n"
       done | sort -n | tail -1
     )"
+
+    exec 3>&- # the annotation channel is only needed for the scan above
 
     # Step 2 — otherwise advance to the global max patch + 1 (empty set => -1 => 0 => first tag).
     if [ -z "$patch" ]; then
