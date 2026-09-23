@@ -33,6 +33,12 @@ moved, or force-updated.
 | R4 | the heal is namespace-anchored | tree A: `PFXvMM.2`; tree B: `PFXvMM.2-a` | P at tree B, prefix | `PFXvMM.3` |
 | R4' | bare tags do not poison a prefixed candidate | tree A: bare `vMM.2`; tree B: `PFXvMM.2-a` | P at tree B, prefix | `PFXvMM.2` (reuse — the bare namespace is invisible) |
 
+## portability guard
+
+| Row | Behavior | Expected |
+|---|---|---|
+| PORT1 | no apostrophe in any COMMENT line inside the step-1 command substitution — bash 3.2 (macOS system bash) reads one as an opening quote and the script fails to parse, while a newer bash (Linux CI) does not | empty |
+
 ## regression guards (existing rows, must pass unchanged)
 
 | Row | Why it matters now |

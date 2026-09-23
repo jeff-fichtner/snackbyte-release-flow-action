@@ -9,14 +9,17 @@ scan and the tag push are not atomic. Principle V's serialization guard said "sa
 which is the wrong granularity — the build id is global to the RELEASABLE, so a per-branch
 group lets `main` and `dev` race, and the resulting duplicate permanently wedges the next
 promotion. III now states the precondition and requires reuse to skip a number owned by
-another tree; V now requires one group per tag namespace, queueing, and a visible annotation
-when a duplicate is healed. No principle removed or redefined, hence MINOR not MAJOR.
+another tree; V now requires one group per tag namespace, forbids a serialization that silently
+drops a deferred release, and requires a healed duplicate to be visible. V states the requirement
+without naming a vendor keyword — the mechanism (GitHub's `queue: max`) belongs in CONSUMING.md,
+where it can be corrected if the platform changes, not in a document that otherwise speaks only
+of tags, trees and manifests. No principle removed or redefined, hence MINOR not MAJOR.
 
 Principles modified:
   III. Fixed, Derived Tag Format — invariant gains its serialization precondition; reuse must
        skip a candidate whose target tag belongs to a different tree.
   V.  Fail Loud — serialization guard restated per-releasable (was per-branch); adds the
-       queueing requirement and the heal-must-be-visible rule.
+       must-not-drop-a-deferred-release rule and the heal-must-be-visible rule.
 
 Templates requiring updates:
   ✅ .specify/templates/plan-template.md — Constitution Check references this file generically.
@@ -152,10 +155,12 @@ guards:
 - Parse tags with anchored regexes only; a near-match MUST NOT be silently accepted.
 - Serialize runs per **releasable** — ONE concurrency group per tag namespace, covering every
   environment branch of that releasable. The number is global to the namespace, so a per-branch
-  group does NOT serialize `main` against `dev` and they will race to the same number. The group
-  MUST also allow queueing (`queue: max`): a platform that holds only one pending run per group
-  cancels the pending one when a newer run arrives, turning the fix into a silently dropped
-  release. Two DIFFERENT releasables MUST NOT share a group — their namespaces cannot collide.
+  group does NOT serialize `main` against `dev` and they will race to the same number. The
+  serialization MUST NOT drop a release it defers: a mechanism that admits only one waiting run,
+  and discards the one already waiting when another arrives, converts the race into a silently
+  skipped release and is not acceptable as-is. Two different releasables MAY share a group — it
+  costs only wall-clock, since their namespaces cannot collide — but one releasable MUST NOT be
+  split across two groups, which is the original defect restated.
 - When a duplicate number reaches the tag set regardless, reuse MUST skip it and say so
   visibly (an annotation, not only stderr) rather than deriving a number another tree owns.
 - A push to a branch not listed in the manifest MUST be rejected by derivation and

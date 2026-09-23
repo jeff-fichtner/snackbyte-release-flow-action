@@ -95,3 +95,30 @@ restate it, the rows prove it, the bump ships it.
   never produce an annotation; but the loop's stdout is the candidate stream feeding `sort`, so
   writing there corrupts the derivation. fd 3 is bound to the real stdout before the command
   substitution captures stdout.
+
+## Self-review outcomes (applied before requesting review)
+
+Reviewing the branch as a whole turned up five defects in it, all fixed here:
+
+- **The constitution named a vendor keyword.** Principle V required `queue: max` by name, in a
+  document that otherwise speaks only of tags, trees and manifests — and that would go stale if
+  GitHub renamed it. Restated as the requirement ("MUST NOT drop a release it defers"); the
+  keyword lives in CONSUMING.md, where it can be corrected.
+- **An over-strong MUST NOT.** The constitution forbade two releasables sharing a group. Sharing
+  is merely slower, not incorrect; stating it as law put a performance preference in a correctness
+  document. Softened to MAY, with the real prohibition kept: one releasable MUST NOT be split
+  across two groups.
+- **Recipe A pointed at the wrong risk.** The comment said to pick a group name no other workflow
+  uses. That inverts the cost: a shared group costs wall-clock, while a *split* releasable is the
+  original bug. Replaced with a note saying which way to err.
+- **Garbled generated comments** in both two-releasables recipes — one read "keyed on the
+  RELEASABLE (keyed on the library's tag-prefix)", and a sentence ran across `cancel-in-progress`
+  and `queue` as if describing them. Rewritten.
+- **Two hygiene defects in the script**: the bash-3.2 editor note sat *inside* the command
+  substitution, after a comment it was meant to protect, so an editor adding a line above it would
+  never see it — lifted above the substitution; and fd 3 was opened for the annotation but never
+  closed, leaking into the `git tag`/`git push` children — now closed after the scan.
+
+Added **PORT1**, a portability row asserting no comment inside the step-1 substitution carries an
+apostrophe. Verified it fails when one is injected (and that the other 44 failures it triggers give
+no usable diagnostic, which is why the row earns its place).
