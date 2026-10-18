@@ -34,43 +34,82 @@ library (`package-json`). No → app (`build-id`).
 2. **A workflow that checks out full history and calls the Action.** `fetch-depth: 0` is required —
    the derivation refuses a shallow clone (it would hide tags).
 
-3. **`permissions: contents: write`** on the job — needed to push the tag.
+3. **`permissions: contents: write`** on the job (or the workflow) — this is what grants the tag
+   push. The repository's own default stays read-only.
 
-4. **Two repo settings.** Neither is expressible in YAML — both are repo config, and the flow
-   is broken or unenforced without them. See **Repo settings** below.
+4. **Repo settings.** The default branch, branch protection and the SHA-pinning policy are not
+   expressible in YAML — they are repo config, and the flow is unenforced or drifts without them.
+   See **Repo settings** below.
 
 ---
 
 ## Repo settings the flow needs
 
-### Allow Actions to push tags — do this BEFORE the first push
+The commands below run from a clone of the repository: `gh` fills `{owner}` and `{repo}` from
+its remote (or from `GH_REPO=owner/repo`), and fails loudly outside one. Each needs admin on the
+repo, which the creating account has.
 
-The Action pushes the version tag back to the repo. The job's `permissions: contents: write`
-is necessary but **not sufficient**: the *repository* setting caps what any token inside it can
-do, so a repo created with read-only defaults passes every check and then **403s on the tag
-push** — the failure lands at the last step of the first release, which reads as a broken Action
-rather than a missing setting.
+### Workflow permissions — leave the repository default at read
+
+The Action pushes the version tag with the job's `GITHUB_TOKEN`, and the job's
+`permissions: contents: write` is what lets it. The repository's **Workflow permissions** setting
+(`default_workflow_permissions`) is only the *default*: what a job gets when its workflow declares
+no `permissions:` block. It does not cap an explicit grant. Keep it at `read`: a job then holds
+write access only where its workflow asks for it.
+
+Check it:
 
 ```bash
-gh api -X PUT repos/<owner>/<repo>/actions/permissions/workflow \
-  -f default_workflow_permissions=write
+gh api 'repos/{owner}/{repo}/actions/permissions/workflow'
 ```
 
-(Or web UI: **Settings → Actions → General → Workflow permissions → "Read and write
-permissions" → Save**.) Needs admin on the repo, which the creating account has. Already failed?
-Enable it, then re-run the failed job — nothing needs to be reverted.
+`"default_workflow_permissions":"read"` is the state you want. If it says `write`, set it back
+(or web UI: **Settings → Actions → General → Workflow permissions → "Read repository contents and
+packages permissions" → Save**):
 
-> **This is a privilege escalation** — it lets CI push to your default branch. An agent must
-> present it and get an explicit human yes, never grant it silently.
+```bash
+gh api -X PUT 'repos/{owner}/{repo}/actions/permissions/workflow' -f default_workflow_permissions=read
+```
+
+A tag push that **403s** means the job's token lacks `contents: write`: the workflow declares no
+`permissions:` block, or declares one without `contents: write` (declaring any permission sets
+every unlisted one to `none`). Fix the workflow and re-run the failed job — nothing needs to be
+reverted. Raising the repository default to `write` would also make the push work, and would hand
+every job in the repository write access it never asked for.
+
+### Default branch = `dev` — for a repo that promotes `dev` → `main`
+
+Once `dev` exists, make it the default branch:
+
+```bash
+gh api -X PATCH 'repos/{owner}/{repo}' -f default_branch=dev
+```
+
+`main` stays the default only in a single-branch repo.
+
+The default branch is the **integration branch** — where the latest work lands — not the branch
+that is live. Which branch deploys production is set by CI, by branch name (`environments.json`),
+never by the default branch. GitHub, though, aims everything automatic at the default branch: new
+pull requests take it as their base, clones check it out, closing keywords close an issue only
+when the PR merges into it, and **Dependabot security-update PRs always target it** — they ignore
+`target-branch` in `dependabot.yml` ("security updates always use the default branch for the
+repository", GitHub's Dependabot options reference). With `main` as the default, those PRs skip
+staging, and merging one puts a commit on `main` that `dev` lacks: `main` diverges from `dev`, and
+the next promotion can no longer fast-forward.
+
+Known cost: Dependabot alerts and code search describe `dev`, not production. With fast-forward
+promotion the gap is only the work not yet promoted, so promote security fixes promptly. A
+`schedule:`-triggered workflow also runs from the default branch, so after the switch it runs
+`dev`'s copy.
 
 ### Branch protection — the merge gate is repo config, not YAML
 
 A workflow can *run* a quality gate on a PR; it cannot *require* it for merge. That is branch
-protection:
+protection. List your environment branches in the loop:
 
 ```bash
-for BRANCH in main dev; do          # your environment branches
-  gh api -X PUT "repos/<owner>/<repo>/branches/${BRANCH}/protection" \
+for BRANCH in main dev; do
+  gh api -X PUT "repos/{owner}/{repo}/branches/${BRANCH}/protection" \
     --input - <<'JSON'
 {
   "required_status_checks": { "strict": false, "contexts": ["validate (merge gate)"] },
@@ -91,13 +130,111 @@ Each knob is deliberate:
 - **`required_pull_request_reviews: null`** — do **not** require PRs. Requiring them breaks
   fast-forward promotion (a fast-forward is not a PR).
 - **`enforce_admins: false`** — admin override stays available as an explicit at-own-risk
-  escape hatch.
-- **`allow_force_pushes: true`** — needed for the fast-forward/promotion flows.
+  escape hatch. It is also what lets an admin push a fast-forward to a commit that never ran the
+  PR-only gate (a merge commit made on `dev`, say).
+- **`allow_force_pushes: true`** — leaves room for a promotion that has to rewrite the branch. A
+  plain fast-forward is not a force push and does not need it.
 
 Branch protection is the *merge* gate. The authoritative backstop is your workflow's own
 push-side gate: re-run the checks on the push and let the Action tag only on pass, so a tag —
 and therefore a deploy — exists only if the gate passed. That holds for a PR merge, an admin
 override, and a direct push alike.
+
+#### Hardened variant — no admin override, no rewritten history
+
+For a repo whose promotion never needs an admin override or a force push:
+
+```bash
+for BRANCH in main dev; do
+  gh api -X PUT "repos/{owner}/{repo}/branches/${BRANCH}/protection" \
+    --input - <<'JSON'
+{
+  "required_status_checks": { "strict": false, "contexts": ["validate (merge gate)"] },
+  "required_pull_request_reviews": null,
+  "enforce_admins": true,
+  "restrictions": null,
+  "allow_force_pushes": false,
+  "allow_deletions": false
+}
+JSON
+done
+```
+
+Three knobs change:
+
+- **`enforce_admins: true`** — the gate binds admins too. Nothing lands on the branch unless that
+  exact commit already carries a passing `validate (merge gate)`.
+- **`allow_force_pushes: false`** — the branch's history cannot be rewritten.
+- **`allow_deletions: false`** — the branch cannot be deleted.
+
+What it costs: **promote through a pull request**. A command-line fast-forward
+(`git push origin dev:main`) is not a force push, so `allow_force_pushes: false` does not stop it.
+The required check does: it is evaluated on the exact commit pushed, `enforce_admins: true` now
+applies it to admins as well, and a commit made on `dev` by merging a PR has never been checked,
+because the gate runs on `pull_request`. Open a `dev` → `main` PR instead: the gate runs on
+`dev`'s head, and when `main` has nothing `dev` lacks, merging it leaves the tree identical, so
+`main` reuses `dev`'s number (see **How the version is derived**). To make that PR refuse a `dev`
+that has not absorbed a `main` hotfix, set `"strict": true` — the "require branches to be up to
+date before merging" setting the promotion rule below relies on.
+
+### Pin every action to a commit SHA — and make the repo require it
+
+Every `uses:` in the recipes below names a full commit SHA, with the release it is in a comment:
+
+```yaml
+- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+```
+
+A tag is a pointer its owner can move, and whatever it points at runs with your job's token —
+here, one that can push to your repo. A commit SHA cannot be moved. Two pieces of setup make that
+hold for every workflow, not only the ones you remember to pin.
+
+**1. Require it.** The repository's Actions policy can refuse any `uses:` that is not a full SHA.
+Turn it on only after **every workflow file that runs on any branch** is pinned — an unpinned one
+then fails at job setup. To list what is still unpinned on the checked-out branch (repeat on each
+branch that carries workflows):
+
+```bash
+grep -rnE 'uses:[[:space:]]' .github/workflows | grep -vE 'uses:[[:space:]]+\./' | grep -vE '@[0-9a-f]{40}([[:space:]]|$)'
+```
+
+No output means every remote `uses:` is pinned (a local `./` action needs no pin). Then:
+
+```bash
+ALLOWED="$(gh api 'repos/{owner}/{repo}/actions/permissions' --jq '.allowed_actions')"
+gh api -X PUT 'repos/{owner}/{repo}/actions/permissions' -F enabled=true -f allowed_actions="${ALLOWED:?could not read allowed_actions}" -F sha_pinning_required=true
+```
+
+The block reads the repo's current `allowed_actions` and sends it back unchanged, so the call
+changes only the pinning rule. Sending `all` instead would silently widen a `selected` or
+`local_only` policy. Read it back with `gh api 'repos/{owner}/{repo}/actions/permissions'`:
+expect `"sha_pinning_required":true` beside your original `allowed_actions`.
+
+**2. Let Dependabot move the pins.** A pinned SHA never updates itself; Dependabot rewrites the
+SHA and its comment when a new release lands. `.github/dependabot.yml`:
+
+```yaml
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /                 # Dependabot finds .github/workflows from here
+    target-branch: dev           # the integration branch; omit in a single-branch repo
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-and-patch:   # minor and patch bumps arrive together, in one PR
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+```
+
+A major bump matches no group, so it arrives in a PR of its own: a major can change what an
+action does with the job's token, so it gets a deliberate review instead of riding along with
+routine bumps.
+
+Two things about Dependabot that this file cannot change: it reads `dependabot.yml` from the
+**default branch** only, so the file takes effect once it is there (one more reason the default
+branch should be `dev`); and **security-update PRs ignore `target-branch`** — they always target
+the default branch, and the options in this entry do not apply to them.
 
 ---
 
@@ -177,10 +314,12 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      # Every `uses:` is pinned to a commit SHA, its release in the comment; Dependabot moves the
+      # pins (see "Pin every action to a commit SHA").
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
       - id: release
-        uses: jeff-fichtner/snackbyte-release-flow-action@v1
+        uses: jeff-fichtner/snackbyte-release-flow-action@c954bf30e67c3419d8694904cf9c4dbc61addf77 # v1.2.0
         # all inputs default: branch=github.ref_name, manifest=./environments.json,
         # package-json=./package.json (supplies major-minor), version-strategy=build-id
       - if: steps.release.outputs.is-env == 'true'
@@ -223,12 +362,12 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: "24", registry-url: "https://registry.npmjs.org" }
       - id: release
-        uses: jeff-fichtner/snackbyte-release-flow-action@v1
+        uses: jeff-fichtner/snackbyte-release-flow-action@c954bf30e67c3419d8694904cf9c4dbc61addf77 # v1.2.0
         with:
           version-strategy: package-json   # <-- the one line that makes it a library release
       - if: steps.release.outputs.is-env == 'true'
@@ -268,7 +407,7 @@ one workflow at the root and points it into the subdirectory. Three edits, all m
    root and resolves both files from there. Pass both paths explicitly:
 
    ```yaml
-   - uses: jeff-fichtner/snackbyte-release-flow-action@v1
+   - uses: jeff-fichtner/snackbyte-release-flow-action@c954bf30e67c3419d8694904cf9c4dbc61addf77 # v1.2.0
      with:
        manifest: <app>/environments.json
        package-json: <app>/package.json
@@ -283,7 +422,7 @@ one workflow at the root and points it into the subdirectory. Three edits, all m
 3. **Fix the npm cache key.** `cache: 'npm'` with no path assumes a root lockfile:
 
    ```yaml
-   - uses: actions/setup-node@v5
+   - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
      with:
        node-version: '24'
        cache: 'npm'
@@ -331,10 +470,10 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
       - id: release
-        uses: jeff-fichtner/snackbyte-release-flow-action@v1
+        uses: jeff-fichtner/snackbyte-release-flow-action@c954bf30e67c3419d8694904cf9c4dbc61addf77 # v1.2.0
         with:
           manifest: packages/service/environments.json
           package-json: packages/service/package.json   # MAJOR.MINOR from the service's own file
@@ -367,16 +506,16 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
           cache: npm
           cache-dependency-path: packages/client-node/package-lock.json
       - id: release
-        uses: jeff-fichtner/snackbyte-release-flow-action@v1
+        uses: jeff-fichtner/snackbyte-release-flow-action@c954bf30e67c3419d8694904cf9c4dbc61addf77 # v1.2.0
         with:
           manifest: packages/client-node/environments.json
           package-json: packages/client-node/package.json   # the version that gets tagged + published
@@ -430,6 +569,9 @@ with that prefix; allowed `[A-Za-z0-9._-]`, starting alphanumeric, ending in `-`
   `is-env=false` and does nothing. Gate downstream steps on `is-env == 'true'`.
 - **The Action tags; it does not deploy or publish.** The tag is the trigger; the deploy/`npm publish`
   is your step, keyed off the outputs.
-- **Pin to `@v1`** for auto-updates within the major, or to a specific `@vX.Y.Z` / `@<sha>` to
-  lock. The `v1` alias is a moving tag: it is fix-forwarded onto each non-breaking release, so
+- **Pin to a commit SHA, with the release in a comment** —
+  `@c954bf30e67c3419d8694904cf9c4dbc61addf77 # v1.2.0`, as every recipe here does, and let
+  Dependabot move the pin when a release lands (see **Pin every action to a commit SHA**). The
+  `v1` alias still exists and is fix-forwarded onto each non-breaking release, so `@v1` follows
+  the major on its own — but it is a moving tag, exactly what `sha_pinning_required` refuses.
   `v2` is reserved for an intentional breaking change to the inputs/outputs.
