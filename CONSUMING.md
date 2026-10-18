@@ -211,18 +211,21 @@ changes only the pinning rule. Sending `all` instead would silently widen a `sel
 expect `"sha_pinning_required":true` beside your original `allowed_actions`.
 
 **2. Let Dependabot move the pins.** A pinned SHA never updates itself; Dependabot rewrites the
-SHA and its comment when a new release lands. `.github/dependabot.yml`:
+SHA and its comment when a new release lands. `.github/dependabot.yml`, where `directory: /` is
+where Dependabot looks for `.github/workflows`, `target-branch: dev` aims its version updates at the
+integration branch (drop the line in a single-branch repo), and the group puts minor and patch
+bumps together in one PR:
 
 ```yaml
 version: 2
 updates:
   - package-ecosystem: github-actions
-    directory: /                 # Dependabot finds .github/workflows from here
-    target-branch: dev           # the integration branch; omit in a single-branch repo
+    directory: /
+    target-branch: dev
     schedule:
       interval: weekly
     groups:
-      actions-minor-and-patch:   # minor and patch bumps arrive together, in one PR
+      actions-minor-and-patch:
         patterns: ['*']
         update-types: ['minor', 'patch']
 ```
@@ -314,8 +317,6 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      # Every `uses:` is pinned to a commit SHA, its release in the comment; Dependabot moves the
-      # pins (see "Pin every action to a commit SHA").
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
       - id: release
