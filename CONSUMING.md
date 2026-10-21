@@ -127,6 +127,8 @@ Each knob is deliberate:
 - **`contexts: ["validate (merge gate)"]`** — the required check is the **job name**, not the
   workflow's UI label. Get it wrong and the check is never matched, so the gate silently
   enforces nothing.
+- **`strict: false`** — a PR does not have to be up to date with the branch before it merges.
+  **Promotion between channels** below says why this stays off on every branch.
 - **`required_pull_request_reviews: null`** — do **not** require PRs. Requiring them breaks
   fast-forward promotion (a fast-forward is not a PR).
 - **`enforce_admins: false`** — admin override stays available as an explicit at-own-risk
@@ -173,9 +175,8 @@ The required check does: it is evaluated on the exact commit pushed, `enforce_ad
 applies it to admins as well, and a commit made on `dev` by merging a PR has never been checked,
 because the gate runs on `pull_request`. Open a `dev` → `main` PR instead: the gate runs on
 `dev`'s head, and when `main` has nothing `dev` lacks, merging it leaves the tree identical, so
-`main` reuses `dev`'s number (see **How the version is derived**). To make that PR refuse a `dev`
-that has not absorbed a `main` hotfix, set `"strict": true` — the "require branches to be up to
-date before merging" setting the promotion rule below relies on.
+`main` reuses `dev`'s number (see **How the version is derived**). `strict` stays `false` here
+too: **Promotion between channels** below says why, and what to check instead.
 
 ### Pin every action to a commit SHA — and make the repo require it
 
@@ -283,8 +284,25 @@ staging validated.
 
 The fast-forward requirement also makes divergent code **unpromotable**: if `dev` has not absorbed
 a `main` hotfix, it cannot fast-forward, so it cannot carry stale code to production under a wrong
-number. Enforce it with branch protection's "require branches up to date before merging", and
-follow it as a reflex regardless.
+number. A command-line promotion enforces that by itself: git refuses a push that is not a
+fast-forward, and only a deliberate force push gets past it.
+
+Branch protection's "require branches to be up to date before merging" (`"strict": true`) is
+**not** the enforcement, and both branch-protection recipes leave it `false`. It applies only to
+pull-request merges, and there it costs more than it catches:
+
+- **On a promotion target (`main`)** it would block every promotion after the first. GitHub's
+  merge button never fast-forwards: a merge, a squash and a rebase-merge each leave `main` holding
+  a commit `dev` lacks, even when the tree is identical. The next `dev` → `main` PR is then out of
+  date until `dev` absorbs that commit, which under the hardened variant takes a PR of its own:
+  after every promotion, hotfix or not.
+- **On the integration branch (`dev`)** every open PR would have to be updated each time another
+  one lands: a push, a fresh CI run, and a fresh automated review where the repo has one.
+
+What it would catch, a promotion PR whose `dev` lacks a `main` hotfix, shows in the tag instead.
+A clean promotion leaves `main` with `dev`'s exact tree, so `main` reuses `dev`'s number. A merge
+that combined the two matches no tagged tree, so `main` mints a new number: production shipped a
+tree staging never ran. Follow the fast-forward rule as a reflex regardless.
 
 ### Why no personal access token is needed
 

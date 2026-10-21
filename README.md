@@ -17,14 +17,19 @@ Add `environments.json` at your repo root (one row per environment), then call t
 Action from your workflow on push. It answers whether the branch is an environment and,
 if so, derives and pushes its version **tag only** — never a commit.
 
+Every `uses:` is pinned to a commit SHA, with the release in a comment, as in
+[`CONSUMING.md`](CONSUMING.md) (its "Pin every action to a commit SHA" section says why, and how
+Dependabot keeps the pins current). Checkout needs `fetch-depth: 0`: the derivation reads the
+full history and tags, and refuses a shallow clone. The Action's inputs all default here:
+`branch` is `github.ref_name`, `manifest` is `./environments.json`, and `package-json` is
+`./package.json`, whose version's first two components are the MAJOR.MINOR.
+
 ```yaml
-- uses: actions/checkout@v4
+- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
   with:
-    fetch-depth: 0            # full history + tags — the derivation refuses a shallow clone
+    fetch-depth: 0
 - id: release
-  uses: jeff-fichtner/snackbyte-release-flow-action@v1
-  # inputs all default: branch=github.ref_name, manifest=./environments.json,
-  # package-json=./package.json (major-minor = its version's first two components)
+  uses: jeff-fichtner/snackbyte-release-flow-action@c954bf30e67c3419d8694904cf9c4dbc61addf77 # v1.2.0
 - if: steps.release.outputs.is-env == 'true'
   run: echo "Deploying ${{ steps.release.outputs.tag }} (version ${{ steps.release.outputs.version }})"
 ```
@@ -60,16 +65,18 @@ promise. Under `package-json`, an already-existing target tag fails loudly: that
 `package.json` before releasing again" discipline. See
 [`CONSUMING.md`](CONSUMING.md) for full wiring (both an app and a library, copy-paste).
 
+A library release, intentional SemVer published on the tag. `npm publish` publishes
+`package.json`'s version; the tag marks the release:
+
 ```yaml
-# Library release: intentional SemVer + publish on the tag
-- uses: actions/checkout@v5
+- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
   with: { fetch-depth: 0 }
 - id: release
-  uses: jeff-fichtner/snackbyte-release-flow-action@v1
+  uses: jeff-fichtner/snackbyte-release-flow-action@c954bf30e67c3419d8694904cf9c4dbc61addf77 # v1.2.0
   with:
     version-strategy: package-json
 - if: steps.release.outputs.is-env == 'true'
-  run: npm publish   # publishes package.json's version; the tag marks the release
+  run: npm publish
 ```
 
 **Tests**: `npm run test:release` runs the behavior-complete matrix (B1–B15), the
