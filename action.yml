@@ -65,20 +65,24 @@ runs:
   using: "composite"
   steps:
     # 1. resolve-env — the short-circuit. Always runs; sets is-env.
+    #    Inputs reach the scripts through env: only. An expression written inside run: is pasted
+    #    into the script text before bash parses it, so a branch named `x$(cmd)` would execute.
     - id: resolve
       shell: bash
       env:
+        BRANCH: ${{ inputs.branch }}
         MANIFEST: ${{ inputs.manifest }}
-      run: bash "$GITHUB_ACTION_PATH/scripts/resolve-env.sh" "${{ inputs.branch }}"
+      run: bash "$GITHUB_ACTION_PATH/scripts/resolve-env.sh" "$BRANCH"
 
     # 2. derive-version — only for an environment push. Creates and pushes the tag; sets version/tag.
     - id: derive
       if: steps.resolve.outputs.is-env == 'true'
       shell: bash
       env:
+        BRANCH: ${{ inputs.branch }}
         MANIFEST: ${{ inputs.manifest }}
         PACKAGE_JSON: ${{ inputs.package-json }}
         MAJOR_MINOR: ${{ inputs.major-minor }}
         VERSION_STRATEGY: ${{ inputs.version-strategy }}
         TAG_PREFIX: ${{ inputs.tag-prefix }}
-      run: bash "$GITHUB_ACTION_PATH/scripts/derive-version.sh" "${{ inputs.branch }}"
+      run: bash "$GITHUB_ACTION_PATH/scripts/derive-version.sh" "$BRANCH"

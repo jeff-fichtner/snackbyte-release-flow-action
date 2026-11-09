@@ -46,6 +46,23 @@ assert P2b "false" "$(resolve chore/tidy)"
 assert P1c "true"  "$(resolve main  MANIFEST=config/envs.json)"
 assert P2c "false" "$(resolve nope  MANIFEST=config/envs.json)"
 
+# resolve_rc <branch> [MANIFEST=path] -> prints the script's exit status
+resolve_rc() {
+  local branch="$1"; shift
+  ( cd "$work"; env "$@" "$SCRIPT" "$branch" >/dev/null 2>&1; echo $? )
+}
+
+# M1-M3 — a manifest that cannot answer the question fails the run. Reading it as "not an
+# environment" would skip the release with a green run.
+printf '{ "environments": [ oops\n' > "$work/broken.json"
+printf '{ "envs": [] }\n' > "$work/shapeless.json"
+assert M1  "1" "$(resolve_rc main MANIFEST=missing.json)"
+assert M2  "1" "$(resolve_rc main MANIFEST=broken.json)"
+assert M3  "1" "$(resolve_rc main MANIFEST=shapeless.json)"
+# and a readable manifest still exits 0 for both answers
+assert M4  "0" "$(resolve_rc main)"
+assert M4b "0" "$(resolve_rc feature-x)"
+
 rm -rf "$work"
 echo ""
 echo "resolve-env: PASS=${PASS} FAIL=${FAIL}"
