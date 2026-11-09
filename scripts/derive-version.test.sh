@@ -329,6 +329,33 @@ W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0
 W="$(fresh_repo)"; ( cd "$W"; git checkout -q -b feature-x; set_pkg 1.4.0
   assert S7 "FAIL" "$(derive feature-x VERSION_STRATEGY=package-json)" )
 
+# V1-V6 — a version that is not a version fails the run, and no tag is created.
+# V1 — package-json strategy, package.json without a version field.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  printf '{"name":"t","private":true}\n' > package.json; git add package.json; git commit -q -m nov
+  assert V1 "FAIL" "$(derive main VERSION_STRATEGY=package-json)"
+  assert V1t "" "$(git tag -l)" )
+# V2 — package-json strategy, a version that is not SemVer.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg banana
+  assert V2 "FAIL" "$(derive main VERSION_STRATEGY=package-json)" )
+# V3 — package-json strategy, SemVer with build metadata is still SemVer -> tagged verbatim.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0+build.7
+  assert V3 "v1.4.0+build.7" "$(derive main VERSION_STRATEGY=package-json)" )
+# V4 — build-id strategy, package.json without a version field.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  printf '{"name":"t","private":true}\n' > package.json; git add package.json; git commit -q -m nov
+  assert V4 "FAIL" "$(derive main)"
+  assert V4t "" "$(git tag -l)" )
+# V5 — build-id strategy, a MAJOR_MINOR override that is not MAJOR.MINOR.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  assert V5 "FAIL" "$(derive main MAJOR_MINOR=1.2.3)"
+  assert V5b "FAIL" "$(derive main MAJOR_MINOR=abc)" )
+# V6 — the branch is data: a branch name carrying shell syntax is looked up, never executed.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  rm -f pwned
+  derive 'x$(touch${IFS}pwned)' >/dev/null
+  assert V6 "absent" "$([ -e pwned ] && echo present || echo absent)" )
+
 # X1 — an unrecognized strategy fails loud, no tag.
 W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
   assert X1 "FAIL" "$(derive main VERSION_STRATEGY=bogus)" )

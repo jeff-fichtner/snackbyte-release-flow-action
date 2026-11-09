@@ -141,11 +141,21 @@ case "$VERSION_STRATEGY" in
     # The version IS whatever package.json declares — verbatim, prerelease and all. major-minor is a
     # build-id concept and is intentionally ignored here (documented in the I/O contract).
     version="$(pkg_read)"
+    # It must be SemVer (MAJOR.MINOR.PATCH, optional -prerelease and +build): an absent field
+    # reads as `undefined`, and anything else would be tagged and published as a release.
+    if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+      echo "The version in ${PACKAGE_JSON} is '${version}' — expected SemVer (e.g. 1.4.0 or 1.4.0-rc.1)." >&2
+      exit 1
+    fi
     ;;
 
   build-id)
     # MAJOR.MINOR from the MAJOR_MINOR override, else from package.json; the patch field is ignored.
     MM="${MAJOR_MINOR:-$(pkg_read ".split('.').slice(0,2).join('.')")}"
+    if ! [[ "$MM" =~ ^[0-9]+\.[0-9]+$ ]]; then
+      echo "MAJOR.MINOR is '${MM}' — expected two numbers (e.g. 1.4), from the major-minor input or the version in ${PACKAGE_JSON}." >&2
+      exit 1
+    fi
     MME="${MM//./\\.}" # regex-escape the dots for anchored matching
     PFXE="${TAG_PREFIX//./\\.}" # likewise for the tag prefix ('.' is its only regex metacharacter)
 

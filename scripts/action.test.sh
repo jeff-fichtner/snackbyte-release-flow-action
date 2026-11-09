@@ -50,6 +50,11 @@ read_action() {
       outIsEnv:  has(/is-env:[\s\S]*?steps\.resolve\.outputs\.is-env/),
       outVersion:has(/version:[\s\S]*?steps\.derive\.outputs\.version/),
       outTag:    has(/tag:[\s\S]*?steps\.derive\.outputs\.tag/),
+      branchMappedResolve: has(/id:\s*resolve[\s\S]*?BRANCH:\s*\$\{\{\s*inputs\.branch\s*\}\}[\s\S]*?id:\s*derive/),
+      branchMappedDerive:  has(/id:\s*derive[\s\S]*?BRANCH:\s*\$\{\{\s*inputs\.branch\s*\}\}/),
+      // An expression inside run: is pasted into the shell script before bash parses it, so a
+      // branch name carrying $(...) would execute. Inputs reach the scripts through env: only.
+      noExprInRun: !y.split("\n").some(l => /^\s*run:.*\$\{\{/.test(l)),
     };
     console.log(JSON.stringify(facts));
   ' "$ACTION_YML"
@@ -75,6 +80,9 @@ assert "wire: package-json default ./" "true" "$(jq_get pkgInputDefault)"
 assert "wire: output is-env"           "true" "$(jq_get outIsEnv)"
 assert "wire: output version"          "true" "$(jq_get outVersion)"
 assert "wire: output tag"              "true" "$(jq_get outTag)"
+assert "wire: branch->resolve env"     "true" "$(jq_get branchMappedResolve)"
+assert "wire: branch->derive env"      "true" "$(jq_get branchMappedDerive)"
+assert "wire: no expression in run:"   "true" "$(jq_get noExprInRun)"
 
 # --- Behavioral replay: execute the step semantics exactly as action.yml declares them. ---
 # invoke_action <workdir> <branch>  -> echoes "is-env|version|tag" after replaying both steps with

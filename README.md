@@ -1,249 +1,155 @@
 # snackbyte-release-flow-action
 
-> A composite GitHub Action — `action.yml` plus two bundled bash scripts
-> (`scripts/derive-version.sh`, `scripts/resolve-env.sh`), covered by a behavior-complete
-> suite (`npm run test:release`). Consume it at `@v1`; see **Usage** and
-> [`CONSUMING.md`](CONSUMING.md). It supports two version strategies: `build-id` for
-> deployable apps (default) and `package-json` for published libraries. The rationale below
-> is the "why".
->
-> **Naming note:** the idea started as "extract `derive-version`," but the real unit is the
-> manifest-driven **release flow** (resolve-env + version derivation), of which derivation is
-> one component — hence `snackbyte-release-flow-action`.
+A GitHub Action that versions your releases from git tags. You list your release branches in an
+`environments.json` file. On each push, the Action answers whether the pushed branch is one of
+them and, if it is, creates and pushes a version tag on that commit. It never makes a commit.
 
-## Usage
+- **One file decides what is releasable.** Adding an environment is a one-row edit to
+  `environments.json`; nothing else in the release tooling changes.
+- **Tags only.** No `chore: release` commits, so your release branches never diverge and a
+  promotion from `dev` to `main` can always fast-forward.
+- **Promotion keeps the number.** When `main` receives exactly the code `dev` already tagged, it
+  gets the same version without the suffix: production ships the build staging tested.
+- **Apps or libraries.** Automatic build numbers for deployable apps, or your `package.json`
+  version for published packages.
 
-Add `environments.json` at your repo root (one row per environment), then call the
-Action from your workflow on push. It answers whether the branch is an environment and,
-if so, derives and pushes its version **tag only** — never a commit.
+## Quick start
 
-Every `uses:` is pinned to a commit SHA, with the release in a comment, as in
-[`CONSUMING.md`](CONSUMING.md) (its "Pin every action to a commit SHA" section says why, and how
-Dependabot keeps the pins current). Checkout needs `fetch-depth: 0`: the derivation reads the
-full history and tags, and refuses a shallow clone. The Action's inputs all default here:
-`branch` is `github.ref_name`, `manifest` is `./environments.json`, and `package-json` is
-`./package.json`, whose version's first two components are the MAJOR.MINOR.
+**1. Add `environments.json`** at the repository root, one row per release branch:
 
-```yaml
-- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-  with:
-    fetch-depth: 0
-- id: release
-  uses: jeff-fichtner/snackbyte-release-flow-action@c954bf30e67c3419d8694904cf9c4dbc61addf77 # v1.2.0
-- if: steps.release.outputs.is-env == 'true'
-  run: echo "Deploying ${{ steps.release.outputs.tag }} (version ${{ steps.release.outputs.version }})"
-```
-
-To push the tag, the job needs `permissions: contents: write`.
-
-**Inputs**: `branch` (default `github.ref_name`), `manifest` (default `./environments.json`),
-`package-json` (default `./package.json` — the file whose version is read; point it into a
-subdirectory for a releasable that does not live at the repo root), `major-minor` (default: read
-from the `package-json` file), `version-strategy` (default `build-id`), `tag-prefix` (default
-`""` — set e.g. `client-node-` when a repo holds a second releasable; its tags become
-`client-node-v…` in their own namespace, invisible to the bare `v…` derivation).
-**Outputs**: `is-env` (`"true"`/`"false"`), `version` (env pushes only; never prefixed), `tag`
-(env pushes only; carries the prefix).
-Full contract:
-[`specs/001-extract-release-flow/contracts/action-io.md`](specs/001-extract-release-flow/contracts/action-io.md).
-
-### Version strategy — apps vs. libraries
-
-The `version-strategy` input selects how the version *number* is chosen. Everything else
-(resolve-env, the manifest, tag-only, every guard) is identical either way.
-
-| | `build-id` (default) | `package-json` |
-|---|---|---|
-| **Version comes from** | derived from git tags (global monotonic, tree-reused PATCH) | `package.json`'s `version`, verbatim |
-| **Number chosen by** | the tooling (automatic) | a human (you edit `package.json`) |
-| **`v1.4.7` means** | "build #7 on the 1.4 line" | "you deliberately released 1.4.7" |
-| **Use for** | **deployable apps** (artifact identity; dev→main promotion reuses the number) | **published libraries** (intentional SemVer — a compatibility promise consumers rely on) |
-
-A deployable app keeps the default. A library **must** set `version-strategy: package-json` — a
-published package's version is an API-compatibility promise, and a build counter can't make that
-promise. Under `package-json`, an already-existing target tag fails loudly: that *is* the "bump
-`package.json` before releasing again" discipline. See
-[`CONSUMING.md`](CONSUMING.md) for full wiring (both an app and a library, copy-paste).
-
-A library release, intentional SemVer published on the tag. `npm publish` publishes
-`package.json`'s version; the tag marks the release:
-
-```yaml
-- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-  with: { fetch-depth: 0 }
-- id: release
-  uses: jeff-fichtner/snackbyte-release-flow-action@c954bf30e67c3419d8694904cf9c4dbc61addf77 # v1.2.0
-  with:
-    version-strategy: package-json
-- if: steps.release.outputs.is-env == 'true'
-  run: npm publish
-```
-
-**Tests**: `npm run test:release` runs the behavior-complete matrix (B1–B15), the
-parameterization deltas (P3–P5), the version-strategy rows (S1–S7), the tag-prefix rows
-(T1–T8, X2), resolve-env (P1–P2), the one-row-edit proof, and the `action.yml` interface
-replay (I1–I3). CI runs the same suite plus a real `uses: ./` smoke test on every push.
-
-A **shareable GitHub Action** that turns a repo's `environments.json` manifest into
-its release flow: it answers *"is this pushed branch a deployable environment?"* and,
-if so, *"what version tag does this push get?"* — creating a tag, never a commit. It
-is the extraction of the already-battle-tested manifest-driven release machinery from
-`snackbyte-base`.
-
----
-
-## The reframe: the manifest is the product, not the derivation
-
-This started as "extract `derive-version.sh` into an Action." That's too small.
-`derive-version.sh` is **one of six consumers** of a single convention — the
-**environment manifest** (`environments.json`) — and the manifest is the actual
-reusable invention. From the manifest file's own header: it is *"the single source of
-truth for the release flow: the version derivation, the CI trigger, the build-time
-identity bake, the noindex header, and the version chip all read this file."*
-
-Every consumer reads that one file:
-
-| Consumer (in `snackbyte-base`) | What it derives from the manifest |
-|---|---|
-| `scripts/derive-version.sh` | branch → `tagSuffix` for the derived tag |
-| `.github/workflows/ci-cd.yml` `resolve-env` job | branch → *"is this an environment?"* (short-circuits non-env pushes) |
-| `scripts/resolve-env.mjs` (build) | env name → baked build identity |
-| `src/environments.ts` (server) | typed reader; `/api/version` reports it |
-| noindex header + version chip | `noindex` / `isPublicFace` facets |
-| `scripts/add-env.test.sh` | proves adding an env is a **one-row edit** |
-
-**The design goal, stated in three separate files, is the reusable idea:** *"adding
-an environment is a one-row edit to `environments.json`, and nothing else in the
-reusable release tooling changes."* `derive-version.sh` is merely the piece that
-happens to be pure bash+git and therefore trivially extractable. The Action should
-ship the **manifest-driven release flow**, with derivation as a component — not the
-derivation alone.
-
-## What it is (and the mental model)
-
-This is a **GitHub Action** in the same sense a VS Code extension is an extension: a
-self-contained, distributable unit for a *host platform*. The parallel is exact:
-
-| | VS Code extension | This tool |
-|---|---|---|
-| **Host platform** | VS Code | GitHub Actions runner |
-| **Distribution channel** | VS Code Marketplace | GitHub Marketplace / `owner/repo@v1` ref |
-| **Manifest** | `package.json` + `contributes` | `action.yml` (`inputs`/`outputs`/`runs`) |
-| **How consumers use it** | install; it hooks into the editor | `uses: snackbyte/…@v1` in a workflow |
-| **Versioning** | its own semver, tagged | its own semver, moving `v1` tag |
-
-The key consequence: **an Action is a different distribution axis than an npm
-package.** It shares almost none of the npm publish surface (no `exports` map, no
-`files` allowlist, no tarball, no `npm publish --provenance`). Its "publish contract"
-is `action.yml` + a moving `v1` tag + a Marketplace listing. So this was never a phase
-of the npm-library template — it's its own kind of thing.
-
-## Why it exists (the decision trail)
-
-This came out of a conversation while setting up `snackbyte-npm-base` (the npm-library
-template). The chain:
-
-1. **`snackbyte-npm-base` got Spec Kit + a constitution + phase specs** — all about
-   *npm packages* (publish contract, SemVer, provenance).
-2. **Question raised:** is the versioning logic in `snackbyte-base` "ripe for a package
-   (not necessarily npm)?"
-3. **Finding:** `derive-version.sh` is a self-contained algorithm with a **formal
-   contract** and a **15-row test matrix** — but it's a **bash+git** tool consumed by
-   *CI workflows*, not an `import`able JS module. Its natural distribution is a GitHub
-   Action, not npm.
-4. **Reframe (the user's):** "I basically wrote a shareable GitHub Action — like a VS
-   Code extension." Correct. It's already an Action, just living inline in one repo.
-5. **Template question:** should there be a third template sibling
-   (`snackbyte-action-base`)? **Decision: no** — a template earns itself at the *second*
-   instance, and this is the only Action likely to be built. Ship the one Action
-   standalone.
-6. **Second reframe (the user's):** derive-version is too small; the real thing is the
-   **manifest**, with derivation as a component. Hence this doc is manifest-centric.
-
-## The manifest (the schema)
-
-`environments.json` — one entry per environment the app deploys to. Facets are
-independent single-purpose switches:
-
-```jsonc
+```json
 {
   "environments": [
-    { "name": "production", "branch": "main", "isPublicFace": true,  "noindex": false, "tagSuffix": ""     },
-    { "name": "staging",    "branch": "dev",  "isPublicFace": false, "noindex": true,  "tagSuffix": "-dev" }
+    { "name": "production", "branch": "main", "tagSuffix": "" },
+    { "name": "staging", "branch": "dev", "tagSuffix": "-dev" }
   ]
 }
 ```
 
-- **`name`** — identity reported at `/api/version` and to app code.
-- **`branch`** — the git branch that drives this environment.
-- **`isPublicFace`** — hide dev-only affordances (e.g. the version chip) when false.
-- **`noindex`** — emit `X-Robots-Tag: noindex`.
-- **`tagSuffix`** — stamped on this environment's derived tags (`''`, `-dev`, …).
+The Action reads `branch` and `tagSuffix`. Any other fields are yours: an app can keep its own
+per-environment settings in the same rows.
 
-Rules: two entries sharing a `tagSuffix` is allowed but warned (their tags become
-indistinguishable); a push to a branch not listed here is rejected by the derivation
-and short-circuited by resolve-env. Tag format is fixed:
-`${tagPrefix}v${MAJOR}.${MINOR}.${PATCH}${tagSuffix}` — MAJOR.MINOR from `package.json`,
-PATCH is the derived global build id within the tag namespace, and `tagPrefix` (the
-`tag-prefix` input, default empty) is the namespace a second releasable in the same repo
-uses so the two never see each other's tags.
+**2. Add `.github/workflows/release.yml`:**
 
-## What the flow does (the two components)
+```yaml
+name: release
+on:
+  push:
+    branches: [main, dev]
+permissions:
+  contents: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+  queue: max
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: release
+        uses: jeff-fichtner/snackbyte-release-flow-action@c954bf30e67c3419d8694904cf9c4dbc61addf77 # v1.2.0
+      - if: steps.release.outputs.is-env == 'true'
+        run: echo "Deploy $TAG"
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+```
 
-**1. resolve-env (the CI short-circuit).** The `on:` trigger can't read the manifest
-(GitHub evaluates it before checkout), so a lightweight job reads `environments.json`
-and answers whether the pushed branch is one of its environments. A push to a
-non-environment branch short-circuits — nothing is built, tagged, or deployed, and no
-expensive `npm ci` runs.
+Each line is there for a reason:
 
-**2. derive-version (the tag).** The version PATCH is **not** stored in `package.json`
-(which holds only MAJOR.MINOR); it's a global, monotonic build id derived from existing
-tags. One rule, every environment:
+- `fetch-depth: 0` gives the Action every tag. It refuses a shallow clone, which would hide tags
+  and produce a number that already exists.
+- `contents: write` lets the job push the tag. The repository's default token can stay read-only.
+- One `concurrency` group for **all** release branches, with `queue: max`, makes releases run one
+  at a time. Two releases deriving at once could otherwise pick the same number.
+- Your deploy or publish steps go after the Action, gated on `is-env`.
 
-- **Reuse** — if any number is already tagged on a commit carrying *this exact source
-  tree* (any suffix), reuse it. The reuse key is the **tree hash**, not the commit SHA,
-  so promoting dev→main reuses the dev number whether the promotion fast-forwards,
-  merges, squashes, or rebases cleanly (all leave the tree identical). A rebase that
-  absorbs divergent changes yields a *different* tree and correctly mints a new number.
-- **Advance** — otherwise `max(patch over ALL vMM.* tags) + 1`. Max over every suffix
-  makes two trees sharing a number impossible *across serialized derivations* — the scan
-  and the tag push are not atomic, so the consuming workflow must serialize every
-  environment branch of a releasable in one concurrency group (see CONSUMING.md). Reuse
-  heals a duplicate that slips through. Gaps are expected and correct for a build id.
+**3. Push.** With `"version": "1.4.0"` in `package.json`, the first push to `dev` is tagged
+`v1.4.0-dev`. Fast-forwarding `main` to it tags the same commit `v1.4.0`. The next change on
+`dev` becomes `v1.4.1-dev`.
 
-CI creates a **tag only** — never a commit or branch push. Guards: fail-loud on an
-existing target tag, refuse shallow clones (they hide tags), anchored regex parsing,
-per-releasable run serialization (one concurrency group per tag namespace, with
-queueing), and a self-healing reuse that skips a build id another tree already owns.
+**Requirements.** Node.js, git and bash on the runner: GitHub-hosted runners have all three. A
+`package.json` supplies the version line, at the root or at the path you give.
 
-## Related reusable patterns (observed, NOT extracted here)
+## How the version is chosen
 
-These surfaced in the same review as adjacent-but-coupled reusable ideas. Documented so
-they aren't lost; each has a reason it's not a clean copy-out.
+The `version-strategy` input picks how the number is chosen. Everything else works the same
+either way.
 
-- **The manifest *convention* itself** — the facet schema + "facets are independent
-  single-purpose switches" philosophy + the tag-format contract. Reusable, but it has
-  **two implementations kept in sync** (bash `node -p` in the script, typed TS in
-  `src/environments.ts`). A shareable form is a JSON schema + spec doc, or a tiny reader
-  library — a design decision, not a copy-paste. Bundling the *bash* half with this
-  Action covers the release-flow use; the typed reader stays per-app.
-- **The spin-up / resolver choreography** (`snackbyte-base` `SPIN-UP.md` + `init.mjs`) —
-  the *pattern* generalizes: de-template (rename placeholders, strip the template guard,
-  delete everything the setup checklist owns — including CI, which is installed per repo
-  from `CONSUMING.md` rather than inherited — and clear inherited tags), plus the
-  **agent-safety STOP-gates** (ask before pushing to `main`;
-  "committed-but-not-pushed is the correct stopping point"). But `init.mjs` is coupled to
-  *that app's* mode/render axes (`server`/`static`, `prerender`/`dynamic`). The
-  **choreography** is worth documenting per template; the **script** is not a shared
-  artifact.
+| | `build-id` (default) | `package-json` |
+|---|---|---|
+| **For** | deployable apps | published libraries |
+| **Version comes from** | the tags: `MAJOR.MINOR` from `package.json`, the last number counted automatically | `package.json`'s `version`, exactly as written |
+| **`v1.4.7` means** | build 7 on the 1.4 line | you chose to release 1.4.7 |
+| **Releasing the same version twice** | cannot happen: a new build gets a new number | fails until you bump `package.json` |
 
-## Where this is referenced
+Under `build-id`, the last number is a build id shared by every environment:
 
-- `project-setup/SETUP-CHECKLIST.md` — "Add the manifest-driven release flow" is a
-  new-project step and points consumers at `CONSUMING.md`.
-- `snackbyte-base` — its `DEPLOY.md` and `SUBDIR-LAYOUT.md` defer the whole release-flow
-  half here rather than restating it, and its spin-up resolver deliberately ships no
-  workflow so apps wire one from `CONSUMING.md` instead of inheriting a stale copy.
+- **Reuse.** If the exact same files were already tagged on any branch, the push gets that
+  number. The match is on the content (git's tree hash), not the commit, so promoting by
+  fast-forward, merge, squash or a clean rebase all keep the number.
+- **Otherwise advance.** The push gets the highest number used so far on that `MAJOR.MINOR` line,
+  plus one. Numbers can skip (a hotfix on `main` uses one), which is normal for a build id.
+
+The tag is `v<MAJOR>.<MINOR>.<PATCH><tagSuffix>`, with an optional prefix for a second releasable
+in the same repository (`tag-prefix`).
+
+## Inputs and outputs
+
+| Input | Default | What it does |
+|---|---|---|
+| `branch` | `github.ref_name` | The branch to look up in the manifest. |
+| `manifest` | `./environments.json` | Path to the manifest, from the checkout root. |
+| `package-json` | `./package.json` | Path to the `package.json` that holds the version, from the checkout root. |
+| `major-minor` | read from `package-json` | Sets `MAJOR.MINOR` directly (`build-id` only). |
+| `version-strategy` | `build-id` | `build-id` or `package-json`. |
+| `tag-prefix` | empty | A tag namespace such as `client-node-`, for a second releasable in the same repository. |
+
+| Output | What it holds |
+|---|---|
+| `is-env` | `"true"` if the branch is in the manifest, else `"false"`. |
+| `version` | The version, e.g. `1.4.7` (environment pushes only; never carries the prefix). |
+| `tag` | The tag that was pushed, e.g. `v1.4.7-dev` (environment pushes only). |
+
+The full contract is in
+[`specs/001-extract-release-flow/contracts/action-io.md`](specs/001-extract-release-flow/contracts/action-io.md).
+
+## What fails, and why
+
+The Action stops rather than guess. Each of these fails the step and creates no tag:
+
+- a shallow clone;
+- the target tag already exists (a re-run, or a library version that was not bumped);
+- a manifest that is missing, is not valid JSON, or has no `environments` array;
+- a version that is not SemVer (`package-json`), or a `MAJOR.MINOR` that is not two numbers;
+- an invalid `version-strategy` or `tag-prefix`.
+
+A push to a branch that is not in the manifest is not a failure: `is-env` is `"false"` and
+nothing happens.
+
+## More
+
+- [`CONSUMING.md`](CONSUMING.md): complete recipes for an app, a library (with npm trusted
+  publishing), a repository whose app lives in a subdirectory, and two releasables in one
+  repository; the repository settings the flow relies on (branch protection, SHA pinning,
+  Dependabot); and how to promote between branches.
+- [`docs/background.md`](docs/background.md): why this exists and how it was designed.
+- [`specs/`](specs/): the specification and contract for each feature.
+
+## Pinning
+
+Pin the Action to a full commit SHA with the release in a comment, as above, and let Dependabot
+move the pin when a release lands. `@v1` also works and follows every non-breaking release, but
+it is a tag that can be moved, which a repository requiring SHA pinning refuses. `v2` is reserved
+for a breaking change to the inputs or outputs.
+
+## Development
+
+`npm test` runs the whole suite: bash scripts against throwaway git repositories, so it needs
+bash, git and Node.js and nothing to install. CI runs the same suite plus a real `uses: ./` run of
+the Action on every push. This repository versions itself with its own Action.
 
 ## License
 
