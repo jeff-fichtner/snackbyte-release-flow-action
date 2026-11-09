@@ -244,3 +244,7 @@ they aren't lost; each has a reason it's not a clean copy-out.
 - `snackbyte-base` — its `DEPLOY.md` and `SUBDIR-LAYOUT.md` defer the whole release-flow
   half here rather than restating it, and its spin-up resolver deliberately ships no
   workflow so apps wire one from `CONSUMING.md` instead of inheriting a stale copy.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
