@@ -342,10 +342,14 @@ jobs:
         # all inputs default: branch=github.ref_name, manifest=./environments.json,
         # package-json=./package.json (supplies major-minor), version-strategy=build-id
       - if: steps.release.outputs.is-env == 'true'
-        run: |
-          echo "Deploy ${{ steps.release.outputs.tag }}"
-          # ... your deploy step, keyed off steps.release.outputs.tag ...
+        run: echo "Deploy $TAG"   # your deploy step, keyed off the tag
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
 ```
+
+The deploy step reads the tag from `env:` rather than from `${{ … }}` written inside `run:`. An
+expression inside `run:` is pasted into the script before the shell parses it; through `env:` it
+stays data.
 
 `package.json` supplies only MAJOR.MINOR (e.g. `"version": "1.4.0"` → the `1.4` line); the Action
 derives the PATCH. Push to `main` → `v1.4.0`, next distinct build → `v1.4.1`, etc.
@@ -372,7 +376,7 @@ on:
     branches: [main]        # your release channel(s)
 permissions:
   contents: write           # push the tag
-  id-token: write           # if you publish to npm with provenance
+  id-token: write           # npm trusted publishing: the job's OIDC token is the npm credential
 concurrency:
   group: release            # per releasable (see Recipe A) — one group, every release channel
   cancel-in-progress: false
@@ -391,9 +395,16 @@ jobs:
           version-strategy: package-json   # <-- the one line that makes it a library release
       - if: steps.release.outputs.is-env == 'true'
         run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 ```
+
+**Publish without a stored token.** The recipe uses npm's
+[trusted publishing](https://docs.npmjs.com/trusted-publishers): npm accepts the job's
+short-lived OIDC token in place of a secret, and attaches provenance to the release on its own.
+On npmjs.com, open the package's **Settings → Trusted publishing**, choose GitHub Actions, and
+enter your repository and this workflow's file name (`release.yml`). The job needs
+`id-token: write` (above) and npm 11.5.1 or later. A stored `NPM_TOKEN` also works, but npm no
+longer issues tokens that last: a write token expires within 90 days, and the release breaks
+when it does.
 
 **The release ritual for a library:**
 1. Edit `package.json` `version` to the SemVer you intend (e.g. `1.5.0` for a new feature).
@@ -498,7 +509,9 @@ jobs:
           package-json: packages/service/package.json   # MAJOR.MINOR from the service's own file
           # tag-prefix omitted: the app owns the bare v0.1.N namespace
       - if: steps.release.outputs.is-env == 'true'
-        run: echo "Deploy ${{ steps.release.outputs.tag }}"   # v0.1.N / v0.1.N-dev
+        run: echo "Deploy $TAG"   # v0.1.N / v0.1.N-dev
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
 ```
 
 The library:
@@ -582,10 +595,18 @@ with that prefix; allowed `[A-Za-z0-9._-]`, starting alphanumeric, ending in `-`
 
 ## Gotchas
 
+- **The runner needs Node.js, git and bash.** The scripts read the manifest and `package.json`
+  with `node`. GitHub-hosted runners have all three; a self-hosted runner or a job `container:`
+  may not, and the step then fails with `node: command not found`.
 - **Shallow clone → hard fail.** Always `fetch-depth: 0`. This is deliberate (a shallow clone hides
   tags and would mint a wrong number).
 - **Non-release branch → clean short-circuit.** A push to a branch not in `environments.json` sets
-  `is-env=false` and does nothing. Gate downstream steps on `is-env == 'true'`.
+  `is-env=false` and does nothing. Gate downstream steps on `is-env == 'true'`. A manifest that
+  is missing, is not valid JSON, or has no `environments` array fails the step instead: the flow
+  cannot tell whether the branch is an environment.
+- **The version must be a version.** Under `package-json` it must be SemVer (`1.4.0`,
+  `1.4.0-rc.1`); under `build-id`, MAJOR.MINOR must be two numbers. Anything else fails the step
+  before a tag is made.
 - **The Action tags; it does not deploy or publish.** The tag is the trigger; the deploy/`npm publish`
   is your step, keyed off the outputs.
 - **Pin to a commit SHA, with the release in a comment** —
