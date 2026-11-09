@@ -50,7 +50,7 @@ jobs:
         with:
           fetch-depth: 0
       - id: release
-        uses: jeff-fichtner/snackbyte-release-flow-action@c954bf30e67c3419d8694904cf9c4dbc61addf77 # v1.2.0
+        uses: jeff-fichtner/snackbyte-release-flow-action@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4
       - if: steps.release.outputs.is-env == 'true'
         run: echo "Deploy $TAG"
         env:

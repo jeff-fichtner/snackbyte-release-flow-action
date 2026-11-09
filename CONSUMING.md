@@ -338,7 +338,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
       - id: release
-        uses: jeff-fichtner/snackbyte-release-flow-action@c954bf30e67c3419d8694904cf9c4dbc61addf77 # v1.2.0
+        uses: jeff-fichtner/snackbyte-release-flow-action@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4
         # all inputs default: branch=github.ref_name, manifest=./environments.json,
         # package-json=./package.json (supplies major-minor), version-strategy=build-id
       - if: steps.release.outputs.is-env == 'true'
@@ -390,7 +390,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: "24", registry-url: "https://registry.npmjs.org" }
       - id: release
-        uses: jeff-fichtner/snackbyte-release-flow-action@c954bf30e67c3419d8694904cf9c4dbc61addf77 # v1.2.0
+        uses: jeff-fichtner/snackbyte-release-flow-action@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4
         with:
           version-strategy: package-json   # <-- the one line that makes it a library release
       - if: steps.release.outputs.is-env == 'true'
@@ -437,7 +437,7 @@ one workflow at the root and points it into the subdirectory. Three edits, all m
    root and resolves both files from there. Pass both paths explicitly:
 
    ```yaml
-   - uses: jeff-fichtner/snackbyte-release-flow-action@c954bf30e67c3419d8694904cf9c4dbc61addf77 # v1.2.0
+   - uses: jeff-fichtner/snackbyte-release-flow-action@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4
      with:
        manifest: <app>/environments.json
        package-json: <app>/package.json
@@ -503,7 +503,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
       - id: release
-        uses: jeff-fichtner/snackbyte-release-flow-action@c954bf30e67c3419d8694904cf9c4dbc61addf77 # v1.2.0
+        uses: jeff-fichtner/snackbyte-release-flow-action@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4
         with:
           manifest: packages/service/environments.json
           package-json: packages/service/package.json   # MAJOR.MINOR from the service's own file
@@ -547,7 +547,7 @@ jobs:
           cache: npm
           cache-dependency-path: packages/client-node/package-lock.json
       - id: release
-        uses: jeff-fichtner/snackbyte-release-flow-action@c954bf30e67c3419d8694904cf9c4dbc61addf77 # v1.2.0
+        uses: jeff-fichtner/snackbyte-release-flow-action@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4
         with:
           manifest: packages/client-node/environments.json
           package-json: packages/client-node/package.json   # the version that gets tagged + published
@@ -610,7 +610,7 @@ with that prefix; allowed `[A-Za-z0-9._-]`, starting alphanumeric, ending in `-`
 - **The Action tags; it does not deploy or publish.** The tag is the trigger; the deploy/`npm publish`
   is your step, keyed off the outputs.
 - **Pin to a commit SHA, with the release in a comment** —
-  `@c954bf30e67c3419d8694904cf9c4dbc61addf77 # v1.2.0`, as every recipe here does, and let
+  `@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4`, as every recipe here does, and let
   Dependabot move the pin when a release lands (see **Pin every action to a commit SHA**). The
   `v1` alias still exists and is fix-forwarded onto each non-breaking release, so `@v1` follows
   the major on its own — but it is a moving tag, exactly what `sha_pinning_required` refuses.
