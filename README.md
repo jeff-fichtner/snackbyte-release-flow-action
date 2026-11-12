@@ -60,7 +60,7 @@ jobs:
       - run: npm ci
       - run: npm run check
       - id: release
-        uses: jeff-fichtner/snackbyte-release-flow-action@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4
+        uses: jeff-fichtner/snackbyte-release-flow-action@01d5fa53356ad4b04b2388a43eda867cc947b670 # v1.2.7
   deploy:
     needs: release
     if: needs.release.outputs.is-env == 'true'
@@ -164,7 +164,8 @@ nothing happens.
 - [`CONSUMING.md`](CONSUMING.md): complete recipes for an app, a library (with npm trusted
   publishing), a repository whose app lives in a subdirectory, and two releasables in one
   repository; the repository settings the flow relies on (branch protection, SHA pinning,
-  Dependabot); and how to promote between branches.
+  Dependabot); how to promote between branches; and **build once**, where a promotion deploys the
+  image staging built instead of rebuilding and rechecking it.
 - [`docs/background.md`](docs/background.md): why this exists and how it was designed.
 - [`specs/`](specs/): the specification and contract for each feature.
 

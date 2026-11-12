@@ -399,7 +399,7 @@ jobs:
       - run: npm ci
       - run: npm run check     # the push-side gate: a failed check leaves no tag
       - id: release
-        uses: jeff-fichtner/snackbyte-release-flow-action@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4
+        uses: jeff-fichtner/snackbyte-release-flow-action@01d5fa53356ad4b04b2388a43eda867cc947b670 # v1.2.7
         # all inputs default: branch=github.ref_name, manifest=./environments.json,
         # package-json=./package.json (supplies major-minor), version-strategy=build-id
   deploy:
@@ -436,6 +436,118 @@ derives the PATCH. Push to `main` → `v1.4.0`, next distinct build → `v1.4.1`
 
 ---
 
+## Build once — promote staging's build
+
+Recipe A builds and checks every push, so a `dev` → `main` promotion rebuilds and rechecks a tree
+staging already built and checked. This variant does that work once. The release job **looks up**
+the push first: when the tree is already released (a promotion), the look-up names the tag it was
+released as, the job skips its checks, and the deploy ships the image staging built instead of
+building another. New code is checked and built exactly as in Recipe A.
+
+It is safe to skip the checks because, in these recipes, the checks run before the tag in the same
+job: a tag on a tree means that tree passed them. That holds only for tags made under this shape, so
+the first promotion after switching should be of a tree `dev` released after the switch. It needs
+v1.2.7 or later. An older pin ignores `mode: lookup` with only a warning and **tags at once, before
+the checks**, so move the pin first; a tag an older pin left on a tree whose checks then failed
+must be deleted before that tree is promoted.
+
+**What your images must be first.** Production deploys the very image staging runs, so the image
+must not know which environment it is in. Anything environment-specific (an environment name, an
+origin, the version label) is a runtime setting given at deploy time, not a build argument, and
+code that reads it in the browser reads it at runtime. Each image is pushed tagged with its release
+tag (`:v1.4.7-dev`), which is how the promotion finds it.
+
+`.github/workflows/release.yml` (the pull-request gate stays Recipe A's `ci.yml`):
+
+```yaml
+name: release
+on:
+  push:
+    branches: [main, dev]
+permissions:
+  contents: read
+concurrency:
+  group: release            # per releasable, as in Recipe A; it also keeps look-up and tag in step
+  cancel-in-progress: false
+  queue: max
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # push the tag
+    outputs:
+      is-env: ${{ steps.release.outputs.is-env }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      released-as: ${{ steps.lookup.outputs.released-as }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0 }
+      - id: lookup
+        uses: jeff-fichtner/snackbyte-release-flow-action@01d5fa53356ad4b04b2388a43eda867cc947b670 # v1.2.7
+        with:
+          mode: lookup      # derive and report; creates nothing
+      - if: steps.lookup.outputs.released-as == ''
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: "24", cache: npm }
+      - if: steps.lookup.outputs.released-as == ''
+        run: npm ci
+      - if: steps.lookup.outputs.released-as == ''
+        run: npm run check  # skipped on a promotion: this tree passed when it was first tagged
+      - id: release
+        uses: jeff-fichtner/snackbyte-release-flow-action@01d5fa53356ad4b04b2388a43eda867cc947b670 # v1.2.7
+        with:
+          expect-tag: ${{ steps.lookup.outputs.tag }}   # refuse any tag the look-up did not report
+  deploy:
+    needs: release
+    if: needs.release.outputs.is-env == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1   # always: a deploy step may read repository files
+      - if: needs.release.outputs.released-as == ''
+        run: echo "Build the image and push it as :$TAG"   # new code: build once, here
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+      - if: needs.release.outputs.released-as != ''
+        run: echo "Add the tag :$TAG to the image :$SOURCE"   # a registry retag, not a build
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          SOURCE: ${{ needs.release.outputs.released-as }}
+      - run: echo "Deploy the image tagged :$SOURCE, by digest, with version $VERSION"
+        env:
+          SOURCE: ${{ needs.release.outputs.released-as || needs.release.outputs.tag }}
+          VERSION: ${{ needs.release.outputs.version }}
+```
+
+How it fits together:
+
+- **The look-up** runs the whole derivation and every refusal (a re-run of a released push, a
+  shallow clone, a bad input), so a job that is going to fail fails before its checks. It needs no
+  write permission. Pushing is the one thing it cannot rehearse: a missing `contents: write` or a
+  tag rule on the remote still shows up at the tag step.
+- **`released-as`** is the tag this exact tree was already released as (`v1.4.7-dev`), or empty for
+  new code. Under `package-json` it is always empty, so this variant is for apps.
+- **`expect-tag`** makes the tag step refuse to create anything but what the look-up reported, so
+  the two calls cannot drift apart inside the job (different inputs, or a step in between that
+  changes the local tags). Both read the tags the checkout fetched; changes on the remote are what
+  the per-releasable concurrency group keeps out.
+- **Every step that checks or builds** carries the same `if:` on `released-as`. A step you add to
+  that set needs it too, or it runs on every promotion.
+- **The deploy** resolves `:$SOURCE` to its digest in your registry and deploys that digest, so
+  production runs byte for byte what staging ran. It gives the version as a runtime setting: the
+  image itself was labelled when staging built it. A promotion also adds its own release tag to
+  that image (no rebuild), so every release tag has an image and any of them can be `released-as`
+  later. If staging's image is missing (its build failed after the tag), the deploy fails loudly:
+  re-run staging's deploy, then re-run only the failed deploy job of the promotion's run. Re-running
+  the whole run, or pushing again, is refused, because the promotion's tag already exists.
+- **Cost.** A promotion's release job is checkout, look-up and tag; its deploy builds nothing.
+
+**Check that it works** on the first promotion after switching: in the `main` run, the look-up's
+`released-as` names staging's tag, the setup, install and check steps show as skipped, the deploy
+has no build step, and the digest production runs is the digest of staging's image.
+
+---
+
 ## Recipe B — published library (`version-strategy: package-json`)
 
 The pull-request gate is Recipe A's `ci.yml`, unchanged. `.github/workflows/release.yml`:
@@ -466,7 +578,7 @@ jobs:
       - run: npm ci
       - run: npm run check     # the push-side gate: a failed check leaves no tag
       - id: release
-        uses: jeff-fichtner/snackbyte-release-flow-action@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4
+        uses: jeff-fichtner/snackbyte-release-flow-action@01d5fa53356ad4b04b2388a43eda867cc947b670 # v1.2.7
         with:
           version-strategy: package-json   # <-- the one line that makes it a library release
   publish:
@@ -526,7 +638,7 @@ one workflow at the root and points it into the subdirectory. Three edits, all m
    root and resolves both files from there. Pass both paths explicitly:
 
    ```yaml
-   - uses: jeff-fichtner/snackbyte-release-flow-action@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4
+   - uses: jeff-fichtner/snackbyte-release-flow-action@01d5fa53356ad4b04b2388a43eda867cc947b670 # v1.2.7
      with:
        manifest: <app>/environments.json
        package-json: <app>/package.json
@@ -609,7 +721,7 @@ jobs:
       - run: npm ci
       - run: npm run check     # the service's checks; a failed check leaves no tag
       - id: release
-        uses: jeff-fichtner/snackbyte-release-flow-action@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4
+        uses: jeff-fichtner/snackbyte-release-flow-action@01d5fa53356ad4b04b2388a43eda867cc947b670 # v1.2.7
         with:
           manifest: packages/service/environments.json
           package-json: packages/service/package.json   # MAJOR.MINOR from the service's own file
@@ -662,7 +774,7 @@ jobs:
       - run: npm ci
       - run: npm run check     # the library's checks; a failed check leaves no tag
       - id: release
-        uses: jeff-fichtner/snackbyte-release-flow-action@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4
+        uses: jeff-fichtner/snackbyte-release-flow-action@01d5fa53356ad4b04b2388a43eda867cc947b670 # v1.2.7
         with:
           manifest: packages/client-node/environments.json
           package-json: packages/client-node/package.json   # the version that gets tagged + published
@@ -715,10 +827,15 @@ read, resolved from the checkout root like `manifest` — set it for a subdirect
 `major-minor` (default: read the `package-json` file; ignored under `package-json` strategy),
 `version-strategy` (`build-id` default | `package-json`), `tag-prefix` (default `""`; e.g.
 `client-node-` — the tag becomes `<prefix>v<version><suffix>` and the derivation sees only tags
-with that prefix; allowed `[A-Za-z0-9._-]`, starting alphanumeric, ending in `-`).
+with that prefix; allowed `[A-Za-z0-9._-]`, starting alphanumeric, ending in `-`), `mode` (`tag`
+default | `lookup`: derive and report, create nothing; v1.2.7+), `expect-tag` (default `""`; the tag
+a look-up reported — any other derived tag is refused; v1.2.7+).
 
 **Outputs**: `is-env` (`"true"`/`"false"` — gate your deploy/publish on this), `version` and `tag`
-(set only for a release-branch push; `tag` carries any `tag-prefix`, `version` never does).
+(set only for a release-branch push; `tag` carries any `tag-prefix`, `version` never does; under
+`lookup` they are what the tag step would produce), `released-as` (an existing tag already carrying
+this number on this exact tree, e.g. `v1.4.7-dev` on a promotion; empty for new code and under
+`package-json`; v1.2.7+).
 
 ## Gotchas
 
@@ -737,7 +854,7 @@ with that prefix; allowed `[A-Za-z0-9._-]`, starting alphanumeric, ending in `-`
 - **The Action tags; it does not deploy or publish.** The tag is the trigger; the deploy/`npm publish`
   is your step, keyed off the outputs.
 - **Pin to a commit SHA, with the release in a comment** —
-  `@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4`, as every recipe here does, and let
+  `@01d5fa53356ad4b04b2388a43eda867cc947b670 # v1.2.7`, as every recipe here does, and let
   Dependabot move the pin when a release lands (see **Pin every action to a commit SHA**). The
   `v1` alias still exists and is fix-forwarded onto each non-breaking release, so `@v1` follows
   the major on its own — but it is a moving tag, exactly what `sha_pinning_required` refuses.

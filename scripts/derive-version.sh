@@ -40,7 +40,8 @@
 #
 # Expected tag: EXPECT_TAG, when set, is the tag the look-up reported. The tag step refuses to
 # create anything else, so a job that skipped its checks on the look-up's word can never tag a
-# different number (tags changed between the two steps: a manual tag, an unserialized run).
+# different number: the two calls got different inputs, or a step between them changed the local
+# tags. Both read the tags the checkout fetched; the concurrency group keeps out remote changes.
 #
 # Parameterization (extracted from snackbyte-base; algorithm unchanged):
 #   $1 / $GITHUB_REF_NAME   the pushed branch
