@@ -1,19 +1,22 @@
 name: test
 
-# The Action's own CI gate: the release-flow test suite MUST run green on every push and PR.
+# The Action's pull-request gate: the release-flow test suite and a real `uses: ./` run, as steps
+# of one job (every job bills at least a minute; see "Keep the Actions bill down" in CONSUMING.md).
+# Pushes to main run the suite again in release.yml, before the tag.
 # A red suite blocks (Constitution V "fail loud"; base Principle VII "test MUST run successfully").
 on:
-  push:
   pull_request:
 
 permissions:
   contents: read
 
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true # a new push to the PR replaces the run in flight
+
 jobs:
-  # 1. The bash acceptance suite: derivation matrix B1–B15 + extraction-delta P3–P5,
-  #    resolve-env P1–P2, one-row-edit proof, and the action.yml interface replay (I1–I2).
-  suite:
-    name: release-flow test suite
+  validate:
+    name: validate (merge gate)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -22,20 +25,16 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
+
+      # The bash acceptance suite: derivation matrix B1–B15 + extraction-delta P3–P5,
+      # resolve-env P1–P2, one-row-edit proof, and the action.yml interface replay (I1–I2).
       - name: Run test:release
         run: npm run test:release
 
-  # 2. True end-to-end: invoke the REAL composite Action via `uses: ./` inside GitHub Actions,
-  #    against a scratch manifest, and assert its outputs — proving the action.yml wiring works on
-  #    a real runner (not just the local interface replay). Uses a throwaway branch input so no tag
-  #    is pushed to this repo; asserts is-env for both an env and a non-env branch.
-  action-smoke:
-    name: action.yml smoke (uses ./)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
+      # True end-to-end: invoke the REAL composite Action via `uses: ./` against a scratch
+      # manifest and assert its outputs — proving the action.yml wiring works on a real runner (not
+      # just the local interface replay). The token is read-only, so no tag reaches this repo;
+      # asserts is-env for both an env and a non-env branch.
       - name: Write a scratch 2-env manifest
         run: |
           cat > /tmp/envs.json <<'JSON'

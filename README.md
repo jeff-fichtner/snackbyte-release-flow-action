@@ -37,7 +37,7 @@ on:
   push:
     branches: [main, dev]
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: release
   cancel-in-progress: false
@@ -45,26 +45,46 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      is-env: ${{ steps.release.outputs.is-env }}
+      tag: ${{ steps.release.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - run: npm ci
+      - run: npm run check
       - id: release
         uses: jeff-fichtner/snackbyte-release-flow-action@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4
-      - if: steps.release.outputs.is-env == 'true'
-        run: echo "Deploy $TAG"
+  deploy:
+    needs: release
+    if: needs.release.outputs.is-env == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Deploy $TAG"
         env:
-          TAG: ${{ steps.release.outputs.tag }}
+          TAG: ${{ needs.release.outputs.tag }}
 ```
 
 Each line is there for a reason:
 
+- `branches: [main, dev]` lists only your release branches, so a push to any other branch runs
+  nothing. GitHub bills every job as at least a minute; checks for work branches run once, on
+  their pull request.
 - `fetch-depth: 0` gives the Action every tag. It refuses a shallow clone, which would hide tags
   and produce a number that already exists.
-- `contents: write` lets the job push the tag. The repository's default token can stay read-only.
+- Your checks run before the Action, in the same job, so a failed check leaves no tag.
+- `contents: write` lets the release job push the tag. The repository's default token, and every
+  other job, stays read-only.
 - One `concurrency` group for **all** release branches, with `queue: max`, makes releases run one
   at a time. Two releases deriving at once could otherwise pick the same number.
-- Your deploy or publish steps go after the Action, gated on `is-env`.
+- The deploy is its own job, gated on `is-env`, because it holds your cloud credentials: those and
+  the token that can push to your repository never share a job.
 
 **3. Push.** With `"version": "1.4.0"` in `package.json`, the first push to `dev` is tagged
 `v1.4.0-dev`. Fast-forwarding `main` to it tags the same commit `v1.4.0`. The next change on

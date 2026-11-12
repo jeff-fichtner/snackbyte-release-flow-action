@@ -51,6 +51,18 @@ not new logic. Source of truth:
 - CI creates a tag only — never a commit or branch push.
 - Design goal: adding an environment is a **one-row edit** to `environments.json`.
 
+## Actions cost and rollout
+
+- **Cheaper is the default.** Actions cost is a release concern, so the recipes in `CONSUMING.md`
+  use as few jobs as possible ("Keep the Actions bill down"): every job bills at least a minute.
+  Jobs stay apart only for security (different credentials or write permissions: the tag-writing
+  job vs the environment-scoped deployer or npm publisher) or for speed, case by case with Jeff's
+  yes. This repo's own workflows follow the same recipe.
+- **Rollout belongs to this tool.** When a release carries a change consumers must adopt, file
+  `ops request <repo>` for each consumer, saying what to change and the version to move to. Ops
+  lists the consumers: `map/map.json` stamps with builder `snackbyte-release-flow-action` (each
+  repo's pin, resolved to a tag).
+
 ## Spec Kit
 
 This project was scaffolded with Spec Kit. Slash commands live in `.claude/skills/`
