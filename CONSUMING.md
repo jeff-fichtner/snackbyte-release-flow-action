@@ -445,8 +445,11 @@ released as, the job skips its checks, and the deploy ships the image staging bu
 building another. New code is checked and built exactly as in Recipe A.
 
 It is safe to skip the checks because, in these recipes, the checks run before the tag in the same
-job: a tag on a tree means that tree passed them. It needs v1.2.7 or later. An older pin ignores
-`mode: lookup` with only a warning and **tags at once, before the checks**, so move the pin first.
+job: a tag on a tree means that tree passed them. That holds only for tags made under this shape, so
+the first promotion after switching should be of a tree `dev` released after the switch. It needs
+v1.2.7 or later. An older pin ignores `mode: lookup` with only a warning and **tags at once, before
+the checks**, so move the pin first; a tag an older pin left on a tree whose checks then failed
+must be deleted before that tree is promoted.
 
 **What your images must be first.** Production deploys the very image staging runs, so the image
 must not know which environment it is in. Anything environment-specific (an environment name, an
@@ -500,12 +503,16 @@ jobs:
     if: needs.release.outputs.is-env == 'true'
     runs-on: ubuntu-latest
     steps:
-      - if: needs.release.outputs.released-as == ''
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1   # always: a deploy step may read repository files
       - if: needs.release.outputs.released-as == ''
         run: echo "Build the image and push it as :$TAG"   # new code: build once, here
         env:
           TAG: ${{ needs.release.outputs.tag }}
+      - if: needs.release.outputs.released-as != ''
+        run: echo "Add the tag :$TAG to the image :$SOURCE"   # a registry retag, not a build
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          SOURCE: ${{ needs.release.outputs.released-as }}
       - run: echo "Deploy the image tagged :$SOURCE, by digest, with version $VERSION"
         env:
           SOURCE: ${{ needs.release.outputs.released-as || needs.release.outputs.tag }}
@@ -520,13 +527,19 @@ How it fits together:
   tag rule on the remote still shows up at the tag step.
 - **`released-as`** is the tag this exact tree was already released as (`v1.4.7-dev`), or empty for
   new code. Under `package-json` it is always empty, so this variant is for apps.
-- **`expect-tag`** makes the tag step refuse to create anything but what the look-up reported. If
-  the tags change between the two steps (a manual tag, a run outside the concurrency group), the job
-  fails instead of tagging a tree whose checks it skipped with a number nobody looked up.
+- **`expect-tag`** makes the tag step refuse to create anything but what the look-up reported, so
+  the two calls cannot drift apart inside the job (different inputs, or a step in between that
+  changes the local tags). Both read the tags the checkout fetched; changes on the remote are what
+  the per-releasable concurrency group keeps out.
+- **Every step that checks or builds** carries the same `if:` on `released-as`. A step you add to
+  that set needs it too, or it runs on every promotion.
 - **The deploy** resolves `:$SOURCE` to its digest in your registry and deploys that digest, so
   production runs byte for byte what staging ran. It gives the version as a runtime setting: the
-  image itself was labelled when staging built it. If staging's image is missing (its build failed
-  after the tag), the lookup in the registry fails loudly; re-run staging's deploy, then promote.
+  image itself was labelled when staging built it. A promotion also adds its own release tag to
+  that image (no rebuild), so every release tag has an image and any of them can be `released-as`
+  later. If staging's image is missing (its build failed after the tag), the deploy fails loudly:
+  re-run staging's deploy, then re-run only the failed deploy job of the promotion's run. Re-running
+  the whole run, or pushing again, is refused, because the promotion's tag already exists.
 - **Cost.** A promotion's release job is checkout, look-up and tag; its deploy builds nothing.
 
 **Check that it works** on the first promotion after switching: in the `main` run, the look-up's
