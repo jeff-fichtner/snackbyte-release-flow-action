@@ -27,8 +27,14 @@
 # The branch is used only as DATA (its suffix, looked up in the manifest). There is no
 # per-environment code path: the same reuse-or-mint runs for every environment.
 #
-# Output: prints nothing to stdout except, when GITHUB_OUTPUT is set, writes `version=` and
-# `tag=` for the workflow. The tag is created and pushed here; no commit, no branch push.
+# Output: prints nothing to stdout except, when GITHUB_OUTPUT is set, writes `version=`, `tag=`
+# and `released-as=` for the workflow. The tag is created and pushed here; no commit, no branch
+# push. `released-as` names an existing tag on this tree that already carries the chosen number
+# (empty when the number is minted), so a promotion can find the build staging made.
+#
+# Mode (feature 006): MODE=lookup runs everything above the tag creation, every refusal included,
+# then writes the same outputs and stops: no tag, no push, no git identity needed. A release job
+# looks up first, skips its checks and build when released-as is set, and tags at the end.
 #
 # Parameterization (extracted from snackbyte-base; algorithm unchanged):
 #   $1 / $GITHUB_REF_NAME   the pushed branch
@@ -36,6 +42,7 @@
 #   $MAJOR_MINOR            override for MAJOR.MINOR            (default: read $PACKAGE_JSON)
 #   $PACKAGE_JSON           path to the package.json to read the version from (default ./package.json)
 #   $TAG_PREFIX             tag-namespace prefix, e.g. client-node-   (default "" — bare v tags)
+#   $MODE                   tag (create and push the tag) | lookup (report only)   (default tag)
 #
 # Tag prefix (feature 004): when a repository holds more than one releasable, each needs its own
 # tag namespace or their numbers corrupt each other (the app's "last vMM.* tag" scan would count
@@ -53,6 +60,7 @@ MANIFEST="${MANIFEST:-./environments.json}"
 VERSION_STRATEGY="${VERSION_STRATEGY:-build-id}"
 PACKAGE_JSON="${PACKAGE_JSON:-./package.json}"
 TAG_PREFIX="${TAG_PREFIX:-}"
+MODE="${MODE:-tag}"
 
 # Validate the strategy FIRST — before any resolve/guard work — so a bad input (a typo) is rejected
 # immediately rather than after side-effect-free-but-wasteful checks (and so a shallow clone can't
@@ -61,6 +69,16 @@ case "$VERSION_STRATEGY" in
   build-id|package-json) ;;
   *)
     echo "Unknown version-strategy '${VERSION_STRATEGY}' — expected 'build-id' or 'package-json'." >&2
+    exit 1
+    ;;
+esac
+
+# The mode is checked just as early: lookup must refuse everything tag refuses, and a bad mode is
+# an input error like a bad strategy.
+case "$MODE" in
+  tag|lookup) ;;
+  *)
+    echo "Unknown mode '${MODE}' — expected 'tag' or 'lookup'." >&2
     exit 1
     ;;
 esac
@@ -141,6 +159,7 @@ case "$VERSION_STRATEGY" in
     # The version IS whatever package.json declares — verbatim, prerelease and all. major-minor is a
     # build-id concept and is intentionally ignored here (documented in the I/O contract).
     version="$(pkg_read)"
+    released_as="" # no reuse under package-json, so no earlier release of this number to point at
     # It must be SemVer (MAJOR.MINOR.PATCH, optional -prerelease and +build): an absent field
     # reads as `undefined`, and anything else would be tagged and published as a release.
     if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
@@ -226,6 +245,21 @@ case "$VERSION_STRATEGY" in
 
     exec 3>&- # the annotation channel is only needed for the scan above
 
+    # released-as: when step 1 chose the number, name a tag in this namespace that already carries
+    # it on this tree, the first by name. A promotion uses it to find the build staging made. The
+    # tag this run would create is never among them: if it existed on this tree, the exists-guard
+    # below refuses the run.
+    released_as=""
+    if [ -n "$patch" ]; then
+      while IFS= read -r t; do
+        n="$(printf '%s\n' "$t" | sed -nE "s/${patch_re}/\1/p")"
+        [ "$n" = "$patch" ] || continue
+        [ "$(git rev-parse "${t}^{tree}" 2>/dev/null)" = "$HEAD_TREE" ] || continue
+        released_as="$t"
+        break
+      done < <(git tag -l "${TAG_PREFIX}v${MM}.${patch}*" | LC_ALL=C sort)
+    fi
+
     # Step 2 — otherwise advance to the global max patch + 1 (empty set => -1 => 0 => first tag).
     if [ -z "$patch" ]; then
       max="$(git tag -l "${TAG_PREFIX}v${MM}.*" | sed -nE "s/${patch_re}/\1/p" | sort -n | tail -1)"
@@ -248,6 +282,20 @@ if git rev-parse "$tag" >/dev/null 2>&1; then
   exit 1
 fi
 
+# Lookup stops here: every refusal above has had its chance, and nothing below can fail without
+# writing. Report what tag mode would do and create nothing.
+if [ "$MODE" = "lookup" ]; then
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    {
+      echo "version=${version}"
+      echo "tag=${tag}"
+      echo "released-as=${released_as}"
+    } >> "$GITHUB_OUTPUT"
+  fi
+  echo "Looked up ${tag} on ${BRANCH}${released_as:+ (already released as ${released_as})}; nothing tagged." >&2
+  exit 0
+fi
+
 # An annotated tag records a tagger identity. A fresh CI runner has no git identity configured,
 # which would make `git tag -a` fail with "Committer identity unknown". As a reusable Action we
 # must not require the consumer to set this up, so fall back to the GitHub Actions bot identity
@@ -266,6 +314,7 @@ if [ -n "${GITHUB_OUTPUT:-}" ]; then
   {
     echo "version=${version}"
     echo "tag=${tag}"
+    echo "released-as=${released_as}"
   } >> "$GITHUB_OUTPUT"
 fi
 echo "Derived ${tag} on ${BRANCH} (no commit pushed)." >&2

@@ -1,6 +1,22 @@
 <!--
 Sync Impact Report
 ==================
+Version change: 1.2.0 → 1.2.1 (2026-11-11, feature 006-build-once-lookup)
+Rationale: PATCH — the Additional Constraints inputs/outputs summary catches up with the
+interface: input `mode` (`tag` default | `lookup`) and output `released-as`. No principle
+changes. Lookup creates nothing (I) and reads the same tree-keyed reuse (II); it runs every
+refusal tag mode runs (V).
+
+Principles modified: none.
+
+Templates requiring updates:
+  ✅ .specify/templates/plan-template.md — no change.
+  ✅ .specify/templates/spec-template.md — no change.
+  ✅ .specify/templates/tasks-template.md — no change.
+
+Follow-up TODOs: none.
+
+--- previous report (1.2.0) ---
 Version change: 1.1.0 → 1.2.0 (2026-09-22, feature 005-build-id-race)
 Rationale: MINOR — guidance materially expanded after production falsified a stated invariant
 (issue #3). Principle III asserted that taking the max over every suffix makes two commits
@@ -202,8 +218,9 @@ is permitted but MUST be warned (their tags become indistinguishable).
 `github.ref_name`), `manifest` (path or inline JSON, default `./environments.json`),
 `package-json` (path, default `./package.json`), `major-minor` (default: read the
 `package-json` file), `version-strategy` (`build-id` default | `package-json`), `tag-prefix`
-(default `""`). Outputs: `is-env` (resolve-env result),
-`version` (`MM.P`, never prefixed), `tag` (`<prefix>vMM.P<suffix>`).
+(default `""`), `mode` (`tag` default | `lookup`: derive and report, create nothing). Outputs:
+`is-env` (resolve-env result), `version` (`MM.P`, never prefixed), `tag` (`<prefix>vMM.P<suffix>`),
+`released-as` (an existing tag already carrying this number on this tree, or empty).
 
 ## Development Workflow
 
@@ -232,4 +249,4 @@ Versioning policy (semantic):
 Compliance: every plan's Constitution Check and every PR review MUST verify conformance to
 these principles. Any deviation MUST be justified in writing or the change MUST be revised.
 
-**Version**: 1.2.0 | **Ratified**: 2026-07-06 | **Last Amended**: 2026-09-22
+**Version**: 1.2.1 | **Ratified**: 2026-07-06 | **Last Amended**: 2026-11-11
