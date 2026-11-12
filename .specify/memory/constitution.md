@@ -3,7 +3,7 @@ Sync Impact Report
 ==================
 Version change: 1.2.0 → 1.2.1 (2026-11-11, feature 006-build-once-lookup)
 Rationale: PATCH — the Additional Constraints inputs/outputs summary catches up with the
-interface: input `mode` (`tag` default | `lookup`) and output `released-as`. No principle
+interface: inputs `mode` (`tag` default | `lookup`) and `expect-tag`, output `released-as`. No principle
 changes. Lookup creates nothing (I) and reads the same tree-keyed reuse (II); it runs every
 refusal tag mode runs (V).
 
@@ -218,7 +218,8 @@ is permitted but MUST be warned (their tags become indistinguishable).
 `github.ref_name`), `manifest` (path or inline JSON, default `./environments.json`),
 `package-json` (path, default `./package.json`), `major-minor` (default: read the
 `package-json` file), `version-strategy` (`build-id` default | `package-json`), `tag-prefix`
-(default `""`), `mode` (`tag` default | `lookup`: derive and report, create nothing). Outputs:
+(default `""`), `mode` (`tag` default | `lookup`: derive and report, create nothing),
+`expect-tag` (refuse any other tag). Outputs:
 `is-env` (resolve-env result), `version` (`MM.P`, never prefixed), `tag` (`<prefix>vMM.P<suffix>`),
 `released-as` (an existing tag already carrying this number on this tree, or empty).
 

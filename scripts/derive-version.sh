@@ -34,7 +34,13 @@
 #
 # Mode (feature 006): MODE=lookup runs everything above the tag creation, every refusal included,
 # then writes the same outputs and stops: no tag, no push, no git identity needed. A release job
-# looks up first, skips its checks and build when released-as is set, and tags at the end.
+# looks up first, skips its checks and build when released-as is set, and tags at the end. Pushing
+# is the one thing lookup cannot rehearse: a missing write permission or a tag rule on the remote
+# still surfaces only at the tag step.
+#
+# Expected tag: EXPECT_TAG, when set, is the tag the look-up reported. The tag step refuses to
+# create anything else, so a job that skipped its checks on the look-up's word can never tag a
+# different number (tags changed between the two steps: a manual tag, an unserialized run).
 #
 # Parameterization (extracted from snackbyte-base; algorithm unchanged):
 #   $1 / $GITHUB_REF_NAME   the pushed branch
@@ -42,7 +48,8 @@
 #   $MAJOR_MINOR            override for MAJOR.MINOR            (default: read $PACKAGE_JSON)
 #   $PACKAGE_JSON           path to the package.json to read the version from (default ./package.json)
 #   $TAG_PREFIX             tag-namespace prefix, e.g. client-node-   (default "" — bare v tags)
-#   $MODE                   tag (create and push the tag) | lookup (report only)   (default tag)
+#   $MODE                   tag (create and push the tag) | lookup (report only)   (unset: tag)
+#   $EXPECT_TAG             the tag a look-up reported; any other derived tag is refused (optional)
 #
 # Tag prefix (feature 004): when a repository holds more than one releasable, each needs its own
 # tag namespace or their numbers corrupt each other (the app's "last vMM.* tag" scan would count
@@ -60,7 +67,10 @@ MANIFEST="${MANIFEST:-./environments.json}"
 VERSION_STRATEGY="${VERSION_STRATEGY:-build-id}"
 PACKAGE_JSON="${PACKAGE_JSON:-./package.json}"
 TAG_PREFIX="${TAG_PREFIX:-}"
-MODE="${MODE:-tag}"
+# Unset means tag (a standalone run). An explicit blank is refused below rather than read as tag:
+# a blank that meant lookup (an unset workflow variable) would otherwise tag before the checks.
+MODE="${MODE-tag}"
+EXPECT_TAG="${EXPECT_TAG:-}"
 
 # Validate the strategy FIRST — before any resolve/guard work — so a bad input (a typo) is rejected
 # immediately rather than after side-effect-free-but-wasteful checks (and so a shallow clone can't
@@ -273,6 +283,13 @@ esac
 # The prefix goes on the TAG only; `version` stays the bare number (it is the artifact identity the
 # consumer bakes/publishes — the prefix is a tag-namespace concern, not part of the version).
 tag="${TAG_PREFIX}v${version}${suffix}"
+
+# The look-up and the tag step must name the same tag. A difference means the tag set changed
+# between them, and the job may have skipped its checks for a number it is no longer getting.
+if [ -n "$EXPECT_TAG" ] && [ "$EXPECT_TAG" != "$tag" ]; then
+  echo "Derived ${tag}, but the look-up reported ${EXPECT_TAG}: the tags changed between the two steps. Refusing to tag; re-run the job." >&2
+  exit 1
+fi
 
 # Never overwrite or silently reuse a tag. If the target already exists this is a re-run or a
 # race (or an attempt to re-tag an already-released number) — fail loudly so no tag is produced

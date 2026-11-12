@@ -23,7 +23,8 @@
 # specs/004-tag-prefix/contracts/versioning.md. Rows R1-R4 are feature 005's self-healing reuse
 # after a duplicated build id, and PORT1 is its portability guard — see
 # specs/005-build-id-race/contracts/versioning.md. Rows L1-L12 are feature 006's look-up mode and
-# released-as output — see specs/006-build-once-lookup/contracts/interface.md.
+# released-as output (L6b, L13-L14: blank mode, expect-tag) — see
+# specs/006-build-once-lookup/contracts/interface.md.
 set -uo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/derive-version.sh"
@@ -671,6 +672,11 @@ W="$(fresh_repo)"; ( cd "$W"
 W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
   assert L6 "FAIL|" "$(derive_full main MODE=bogus)|$(tagset)" )
 
+# L6b — an explicit BLANK mode is refused, not read as tag: a blank meant as lookup (an unset
+#   workflow variable) would otherwise tag before the checks. Unset still means tag (every B row).
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  assert L6b "FAIL|" "$(derive_full main MODE=)|$(tagset)" )
+
 # L7 — several environments already carry the number on the tree: released-as is the first by
 #   name, every time (v0.1.2-a before v0.1.2-c, whichever was tagged first).
 W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
@@ -711,6 +717,22 @@ W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
   look="$(derive_full main MODE=lookup)"
   tagged="$(derive_full main)"
   assert L12 "${PKG_MM}.3|v${PKG_MM}.3||${PKG_MM}.3|v${PKG_MM}.3|" "${look}|${tagged}" )
+
+# L13 — expect-tag that matches the look-up: the tag step creates the reported tag.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "v${PKG_MM}.2-a" -m x
+  look_tag="$(derive_full main MODE=lookup | cut -d'|' -f2)"
+  assert L13 "${PKG_MM}.2|v${PKG_MM}.2|v${PKG_MM}.2-a" "$(derive_full main EXPECT_TAG="$look_tag")" )
+
+# L14 — the tags change between look-up and tag (the reused tag disappears): the tag step would
+#   mint a fresh number for a tree whose checks were skipped. expect-tag refuses and tags nothing.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  git tag -a "v${PKG_MM}.5" -m x
+  commit; git tag -a "v${PKG_MM}.2-a" -m x
+  look_tag="$(derive_full main MODE=lookup | cut -d'|' -f2)"
+  git tag -d "v${PKG_MM}.2-a" >/dev/null
+  before="$(tagset)"
+  assert L14 "v${PKG_MM}.2|FAIL|${before}" "${look_tag}|$(derive_full main EXPECT_TAG="$look_tag")|$(tagset)" )
 
 echo ""
 P="$(wc -l < "$PASS_F" | tr -d ' ')"; F="$(wc -l < "$FAIL_F" | tr -d ' ')"

@@ -57,6 +57,13 @@ inputs:
       (released-as) before spending checks and a build, then tag at the end of the job.
     required: false
     default: "tag"
+  expect-tag:
+    description: >-
+      The tag a lookup step in the same job reported (steps.<id>.outputs.tag). When set, the Action
+      refuses to create any other tag, so a job that skipped its checks on the look-up's word never
+      tags a different number. Empty (default) skips the comparison.
+    required: false
+    default: ""
 
 outputs:
   is-env:
@@ -102,4 +109,5 @@ runs:
         VERSION_STRATEGY: ${{ inputs.version-strategy }}
         TAG_PREFIX: ${{ inputs.tag-prefix }}
         MODE: ${{ inputs.mode }}
+        EXPECT_TAG: ${{ inputs.expect-tag }}
       run: bash "$GITHUB_ACTION_PATH/scripts/derive-version.sh" "$BRANCH"

@@ -126,6 +126,7 @@ in the same repository (`tag-prefix`).
 | `major-minor` | read from `package-json` | Sets `MAJOR.MINOR` directly (`build-id` only). |
 | `version-strategy` | `build-id` | `build-id` or `package-json`. |
 | `tag-prefix` | empty | A tag namespace such as `client-node-`, for a second releasable in the same repository. |
+| `expect-tag` | empty | The tag a `lookup` step reported. The Action refuses to create any other tag. |
 | `mode` | `tag` | `tag` creates and pushes the tag. `lookup` reports the same outputs and creates nothing (no write permission needed), so a job can check before its tests whether this code is already released. |
 
 | Output | What it holds |
@@ -136,7 +137,9 @@ in the same repository (`tag-prefix`).
 | `released-as` | An existing tag that already carries this number on this exact code, e.g. `v1.4.7-dev` when `main` is promoted from `dev`; empty when the number is new, and always empty under `package-json`. |
 
 The full contract is in
-[`specs/001-extract-release-flow/contracts/action-io.md`](specs/001-extract-release-flow/contracts/action-io.md).
+[`specs/001-extract-release-flow/contracts/action-io.md`](specs/001-extract-release-flow/contracts/action-io.md),
+with `mode`, `expect-tag` and `released-as` in
+[`specs/006-build-once-lookup/contracts/interface.md`](specs/006-build-once-lookup/contracts/interface.md).
 
 ## What fails, and why
 
@@ -148,8 +151,10 @@ The Action stops rather than guess. Each of these fails the step and creates no 
 - a version that is not SemVer (`package-json`), or a `MAJOR.MINOR` that is not two numbers;
 - an invalid `version-strategy`, `tag-prefix` or `mode`.
 
-A `lookup` run fails in exactly the same cases, so a job that looks up first stops before it spends
-its checks.
+A `lookup` run fails in the same cases, so a job that looks up first stops before it spends its
+checks. Pushing is the one thing it cannot try: a missing write permission or a tag rule on the
+remote still shows up only when the tag is pushed. With `expect-tag`, the tag step also fails if it
+would create a different tag than the look-up reported.
 
 A push to a branch that is not in the manifest is not a failure: `is-env` is `"false"` and
 nothing happens.

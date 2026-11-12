@@ -27,14 +27,15 @@ jobs:
           node-version: "24"
 
       # The bash acceptance suite: derivation matrix B1–B15 + extraction-delta P3–P5,
-      # resolve-env P1–P2, one-row-edit proof, and the action.yml interface replay (I1–I2).
+      # resolve-env P1–P2, one-row-edit proof, the look-up rows L1–L14, and the action.yml
+      # interface replay (I1–I4).
       - name: Run test:release
         run: npm run test:release
 
       # True end-to-end: invoke the REAL composite Action via `uses: ./` against a scratch
       # manifest and assert its outputs — proving the action.yml wiring works on a real runner (not
       # just the local interface replay). The token is read-only, so no tag reaches this repo;
-      # asserts is-env for both an env and a non-env branch.
+      # asserts is-env for both an env and a non-env branch, then a look-up (mode: lookup).
       - name: Write a scratch 2-env manifest
         run: |
           cat > /tmp/envs.json <<'JSON'

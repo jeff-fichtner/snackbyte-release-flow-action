@@ -53,11 +53,13 @@ read_action() {
       outTag:    has(/tag:[\s\S]*?steps\.derive\.outputs\.tag/),
       branchMappedResolve: has(/id:\s*resolve[\s\S]*?BRANCH:\s*\$\{\{\s*inputs\.branch\s*\}\}[\s\S]*?id:\s*derive/),
       branchMappedDerive:  has(/id:\s*derive[\s\S]*?BRANCH:\s*\$\{\{\s*inputs\.branch\s*\}\}/),
-      // An expression inside run: is pasted into the shell script before bash parses it, so a
-      // branch name carrying $(...) would execute. Inputs reach the scripts through env: only.
       modeMappedDerive:      has(/id:\s*derive[\s\S]*?MODE:\s*\$\{\{\s*inputs\.mode\s*\}\}/),
       modeInputDefault:      has(/\n  mode:[\s\S]*?default:\s*"tag"/),
       outReleasedAs:         has(/released-as:[\s\S]*?steps\.derive\.outputs\.released-as/),
+      expectMappedDerive:    has(/id:\s*derive[\s\S]*?EXPECT_TAG:\s*\$\{\{\s*inputs\.expect-tag\s*\}\}/),
+      expectInputDefault:    has(/\n  expect-tag:[\s\S]*?default:\s*""/),
+      // An expression inside run: is pasted into the shell script before bash parses it, so a
+      // branch name carrying $(...) would execute. Inputs reach the scripts through env: only.
       noExprInRun: !y.split("\n").some(l => /^\s*run:.*\$\{\{/.test(l)),
     };
     console.log(JSON.stringify(facts));
@@ -90,9 +92,11 @@ assert "wire: no expression in run:"   "true" "$(jq_get noExprInRun)"
 assert "wire: mode->derive env"        "true" "$(jq_get modeMappedDerive)"
 assert "wire: mode default tag"        "true" "$(jq_get modeInputDefault)"
 assert "wire: output released-as"      "true" "$(jq_get outReleasedAs)"
+assert "wire: expect-tag->derive env"  "true" "$(jq_get expectMappedDerive)"
+assert "wire: expect-tag default empty" "true" "$(jq_get expectInputDefault)"
 
 # --- Behavioral replay: execute the step semantics exactly as action.yml declares them. ---
-# invoke_action <workdir> <branch>  -> echoes "is-env|version|tag" after replaying both steps with
+# invoke_action <workdir> <branch>  -> echoes "is-env|version|tag|released-as" after replaying both steps with
 # the real env mapping and the real gate. Uses the shipped scripts via their real paths.
 invoke_action() {
   local wd="$1" branch="$2" manifest="${3:-./environments.json}" mm="${4:-}" prefix="${5:-}" mode="${6:-tag}"
@@ -111,11 +115,7 @@ invoke_action() {
         released_as="$(sed -nE 's/^released-as=(.*)$/\1/p' "$gho2")"
       fi
     fi
-    if [ "$mode" = "tag" ] && [ -z "$released_as" ]; then
-      echo "${is_env}|${version}|${tag}"
-    else
-      echo "${is_env}|${version}|${tag}|${released_as}"
-    fi
+    echo "${is_env}|${version}|${tag}|${released_as}"
   )
 }
 
@@ -141,7 +141,7 @@ commits_before="$(git -C "$W" rev-list --count HEAD)"
 head_before="$(git -C "$W" rev-parse HEAD)"
 tags_before="$(git -C "$W" tag | wc -l | tr -d ' ')"
 OUT="$(invoke_action "$W" main)"
-assert "I1 env push output" "true|0.1.0|v0.1.0" "$OUT"
+assert "I1 env push output" "true|0.1.0|v0.1.0|" "$OUT"
 commits_after="$(git -C "$W" rev-list --count HEAD)"
 head_after="$(git -C "$W" rev-parse HEAD)"
 tags_after="$(git -C "$W" tag | wc -l | tr -d ' ')"
@@ -180,7 +180,7 @@ assert "I1b identity-less tag created" "v0.1.0" "$tag_ident"
 W2="$(mk_repo)"
 tags_before2="$(git -C "$W2" tag | wc -l | tr -d ' ')"
 OUT2="$(invoke_action "$W2" feature-x)"
-assert "I2 non-env push output" "false||" "$OUT2"
+assert "I2 non-env push output" "false|||" "$OUT2"
 tags_after2="$(git -C "$W2" tag | wc -l | tr -d ' ')"
 assert "I2 no tag created" "$tags_before2" "$tags_after2"
 
@@ -188,7 +188,7 @@ assert "I2 no tag created" "$tags_before2" "$tags_after2"
 #   action.yml maps it; the tag output carries the prefix, the version output does not.
 W3="$(mk_repo)"
 OUT3="$(invoke_action "$W3" main ./environments.json "" client-node-)"
-assert "I3 prefixed env push output" "true|0.1.0|client-node-v0.1.0" "$OUT3"
+assert "I3 prefixed env push output" "true|0.1.0|client-node-v0.1.0|" "$OUT3"
 
 # I4 — build once (feature 006): on a promotion, the replayed look-up reports the reused number
 #   and where it came from and tags nothing; the replayed tag step then agrees and makes that tag.

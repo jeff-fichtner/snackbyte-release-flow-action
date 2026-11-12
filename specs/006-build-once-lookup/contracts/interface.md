@@ -4,10 +4,21 @@
 
 | Value | Behavior |
 |---|---|
-| `tag` (default) | Today's behavior: resolve, derive, create and push the tag. |
+| `tag` (default) | Resolve, derive, create and push the tag. |
 | `lookup` | Resolve and derive exactly as `tag` would, through every refusal, then stop. No tag is created or pushed; no write permission or git identity is needed. |
 
-Anything else is refused before any other work: `Unknown mode '<v>' — expected 'tag' or 'lookup'.`
+Anything else, an explicit blank included, is refused before any other work:
+`Unknown mode '<v>' — expected 'tag' or 'lookup'.` (Unset, as in a standalone run of the script, means
+`tag`; through `action.yml` the input always carries its default.)
+
+Pushing is the one step lookup cannot rehearse: a missing write permission or a tag rule on the
+remote surfaces only at the tag step.
+
+## Input `expect-tag`
+
+The tag a look-up in the same job reported. When set, a derived tag that differs is refused before
+anything is created: `Derived <x>, but the look-up reported <y> …`. Empty (default) skips the check.
+The build-once recipe always passes it.
 
 ## Outputs
 
@@ -46,4 +57,7 @@ for the releasable runs in between, which the recipes' per-releasable concurrenc
 | L10 | prefixed namespace promotion; lookup | released-as carries the prefix |
 | L11 | lookup with no git identity, no origin | succeeds (no write attempted) |
 | L12 | heal state (R1); lookup | same answer as tag (`vMM.3`), released-as empty |
+| L6b | `mode` explicitly blank | FAIL, nothing tagged |
+| L13 | L1 state; tag with `expect-tag` = look-up's tag | tag created |
+| L14 | reused tag removed between look-up and tag; tag with `expect-tag` | FAIL, nothing tagged |
 | I4 | action.yml | `mode`→`MODE` on derive, default `tag`; `released-as` output from derive; replayed lookup then tag agree |
