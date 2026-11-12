@@ -45,18 +45,19 @@ first and run red before the code that makes them pass.
 
 ## Phase 7: Polish
 
-- [ ] T012 Add a real `uses: ./` look-up to the PR gate (read-only token: proves lookup needs no write) in .github/workflows/test.yml
-- [ ] T013 Document `mode` and `released-as` in the interface reference of README.md and the inputs/outputs list in CLAUDE.md
+- [x] T012 Add a real `uses: ./` look-up to the PR gate (read-only token: proves lookup needs no write) in .github/workflows/test.yml
+- [x] T013 Document `mode` and `released-as` in the interface reference of README.md and the inputs/outputs list in CLAUDE.md
 - [x] T014 [P] Amend the constitution's I/O summary with `mode` and `released-as` (PATCH 1.2.0 → 1.2.1, Sync Impact Report) in .specify/memory/constitution.md
 - [x] T015 Update the script header and the test header row index (L-series) in scripts/derive-version.sh and scripts/derive-version.test.sh
 - [ ] T016 Run `npm run test:release` and actionlint; open the PR
-- [ ] T017 After PR #10 merges: rebase, add the build-once recipe and the interface reference to CONSUMING.md (FR-009)
+- [ ] T017 After this feature is released: in a follow-up PR, add the build-once recipe and the interface reference to CONSUMING.md, pinned to the release that carries `mode` (an older pin ignores `mode` and would tag before the checks), and move the other recipe pins with it (FR-009)
 
 ## Dependencies
 
-T001 → T002 → US1 (T003–T007) → US2, US4, US3 (rows only; any order) → Polish. T012, T013 and T017
-wait on PR #10: it rewrites test.yml, README.md, CLAUDE.md and CONSUMING.md, so they are done after
-it merges and this branch is rebased, never alongside it.
+T001 → T002 → US1 (T003–T007) → US2, US4, US3 (rows only; any order) → Polish. T012 and T013
+waited on PR #10: it rewrites test.yml, README.md, CLAUDE.md and CONSUMING.md, so they are done after
+it merges and this branch is rebased, never alongside it. T017
+waits on this feature's own release, whose pin the recipe needs.
 
 ## Parallel opportunities
 

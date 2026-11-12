@@ -126,12 +126,14 @@ in the same repository (`tag-prefix`).
 | `major-minor` | read from `package-json` | Sets `MAJOR.MINOR` directly (`build-id` only). |
 | `version-strategy` | `build-id` | `build-id` or `package-json`. |
 | `tag-prefix` | empty | A tag namespace such as `client-node-`, for a second releasable in the same repository. |
+| `mode` | `tag` | `tag` creates and pushes the tag. `lookup` reports the same outputs and creates nothing (no write permission needed), so a job can check before its tests whether this code is already released. |
 
 | Output | What it holds |
 |---|---|
 | `is-env` | `"true"` if the branch is in the manifest, else `"false"`. |
 | `version` | The version, e.g. `1.4.7` (environment pushes only; never carries the prefix). |
-| `tag` | The tag that was pushed, e.g. `v1.4.7-dev` (environment pushes only). |
+| `tag` | The tag that was pushed, e.g. `v1.4.7-dev` (environment pushes only; under `lookup`, the tag that would be pushed). |
+| `released-as` | An existing tag that already carries this number on this exact code, e.g. `v1.4.7-dev` when `main` is promoted from `dev`; empty when the number is new, and always empty under `package-json`. |
 
 The full contract is in
 [`specs/001-extract-release-flow/contracts/action-io.md`](specs/001-extract-release-flow/contracts/action-io.md).
@@ -144,7 +146,10 @@ The Action stops rather than guess. Each of these fails the step and creates no 
 - the target tag already exists (a re-run, or a library version that was not bumped);
 - a manifest that is missing, is not valid JSON, or has no `environments` array;
 - a version that is not SemVer (`package-json`), or a `MAJOR.MINOR` that is not two numbers;
-- an invalid `version-strategy` or `tag-prefix`.
+- an invalid `version-strategy`, `tag-prefix` or `mode`.
+
+A `lookup` run fails in exactly the same cases, so a job that looks up first stops before it spends
+its checks.
 
 A push to a branch that is not in the manifest is not a failure: `is-env` is `"false"` and
 nothing happens.
