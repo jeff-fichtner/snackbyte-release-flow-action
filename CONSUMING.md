@@ -41,6 +41,9 @@ library (`package-json`). No → app (`build-id`).
    expressible in YAML — they are repo config, and the flow is unenforced or drifts without them.
    See **Repo settings** below.
 
+5. **Few jobs.** Every job bills at least a minute, so the recipes keep to the fewest the security
+   boundaries allow. See **Keep the Actions bill down** below.
+
 ---
 
 ## Repo settings the flow needs
@@ -312,7 +315,56 @@ deploy as a chained `needs:` job in the *same* run, so no second event is requir
 
 ---
 
+## Keep the Actions bill down
+
+GitHub bills every job as at least one whole minute: a 4-second job bills 60 seconds. Cheaper is
+the default, so the recipes below use as few jobs as they can:
+
+- **Trigger on the environment branches only.** The release workflow's push trigger lists them
+  (`branches: [main, dev]`), never `branches-ignore`. A push to a work branch then runs nothing;
+  its checks run on its pull request.
+- **One check job, named as the required check.** Lint, the merge gate and every package's checks
+  run as steps of a single job, `validate (merge gate)`, which is the name branch protection
+  requires. A job that only reports other jobs' results bills a minute and checks nothing.
+- **The push-side checks run in the job that tags.** The checks run first and the Action runs
+  after them, so a failed check leaves no tag. Their own job would cost one more billed minute
+  per release push, and buy little: a deploy job already runs the same dependencies with cloud
+  credentials.
+- **Jobs stay apart only for security or speed.** A job that holds a different credential or write
+  permission is its own job: the deploy job, scoped to its environment's credentials, stays
+  separate from the tag-writing job, and so does an npm publish job. Splitting checks out to
+  finish sooner costs minutes; weigh it case by case.
+- **Superseded pull-request runs cancel.** A new push to a pull request cancels the run it
+  replaces. Release runs never cancel (see the concurrency notes below).
+
+---
+
 ## Recipe A — deployable app (`build-id`, the default)
+
+Two workflow files: the pull-request gate, and the release on push.
+
+`.github/workflows/ci.yml`:
+
+```yaml
+name: ci
+on:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true  # a new push to the PR replaces the run in flight
+jobs:
+  validate:
+    name: validate (merge gate)   # the check branch protection requires
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: "24", cache: npm }
+      - run: npm ci
+      - run: npm run check     # lint, typecheck, tests: every check, one job
+```
 
 `.github/workflows/release.yml`:
 
@@ -320,9 +372,9 @@ deploy as a chained `needs:` job in the *same* run, so no second event is requir
 name: release
 on:
   push:
-    branches: [main, dev]   # your environment branches
+    branches: [main, dev]   # your environment branches; work branches run only on their PR
 permissions:
-  contents: write
+  contents: read
 concurrency:
   # Per RELEASABLE, not per branch. Under build-id the number is global across every environment
   # branch, so `release-${{ github.ref_name }}` would let a main push and a dev push race to the
@@ -334,22 +386,41 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write       # push the tag
+    outputs:
+      is-env: ${{ steps.release.outputs.is-env }}
+      tag: ${{ steps.release.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: "24", cache: npm }
+      - run: npm ci
+      - run: npm run check     # the push-side gate: a failed check leaves no tag
       - id: release
         uses: jeff-fichtner/snackbyte-release-flow-action@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4
         # all inputs default: branch=github.ref_name, manifest=./environments.json,
         # package-json=./package.json (supplies major-minor), version-strategy=build-id
-      - if: steps.release.outputs.is-env == 'true'
-        run: echo "Deploy $TAG"   # your deploy step, keyed off the tag
+  deploy:
+    needs: release
+    if: needs.release.outputs.is-env == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Deploy $TAG"   # your deploy, keyed off the tag
         env:
-          TAG: ${{ steps.release.outputs.tag }}
+          TAG: ${{ needs.release.outputs.tag }}
 ```
 
-The deploy step reads the tag from `env:` rather than from `${{ … }}` written inside `run:`. An
-expression inside `run:` is pasted into the script before the shell parses it; through `env:` it
-stays data.
+The deploy is its own job because it holds different credentials from the tag-writing job: give
+it the `environment:` its cloud credentials are scoped to, and any `permissions:` its login needs
+(`id-token: write` for a keyless cloud login). Its steps read the tag from `env:` rather than from
+`${{ … }}` written inside `run:`. An expression inside `run:` is pasted into the script before the
+shell parses it; through `env:` it stays data.
+
+Replace `npm run check` with whatever runs your checks; keep them steps of the one job. The two
+files hold one job each per event: a pull request bills one job, a release push bills the release
+job plus the deploy.
 
 `package.json` supplies only MAJOR.MINOR (e.g. `"version": "1.4.0"` → the `1.4` line); the Action
 derives the PATCH. Push to `main` → `v1.4.0`, next distinct build → `v1.4.1`, etc.
@@ -367,7 +438,7 @@ derives the PATCH. Push to `main` → `v1.4.0`, next distinct build → `v1.4.1`
 
 ## Recipe B — published library (`version-strategy: package-json`)
 
-`.github/workflows/release.yml`:
+The pull-request gate is Recipe A's `ci.yml`, unchanged. `.github/workflows/release.yml`:
 
 ```yaml
 name: release
@@ -375,8 +446,7 @@ on:
   push:
     branches: [main]        # your release channel(s)
 permissions:
-  contents: write           # push the tag
-  id-token: write           # npm trusted publishing: the job's OIDC token is the npm credential
+  contents: read
 concurrency:
   group: release            # per releasable (see Recipe A) — one group, every release channel
   cancel-in-progress: false
@@ -384,24 +454,43 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write       # push the tag
+    outputs:
+      is-env: ${{ steps.release.outputs.is-env }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with: { node-version: "24", registry-url: "https://registry.npmjs.org" }
+        with: { node-version: "24", cache: npm }
+      - run: npm ci
+      - run: npm run check     # the push-side gate: a failed check leaves no tag
       - id: release
         uses: jeff-fichtner/snackbyte-release-flow-action@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4
         with:
           version-strategy: package-json   # <-- the one line that makes it a library release
-      - if: steps.release.outputs.is-env == 'true'
-        run: npm publish
+  publish:
+    needs: release
+    if: needs.release.outputs.is-env == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write       # npm trusted publishing: the job's OIDC token is the npm credential
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: "24", registry-url: "https://registry.npmjs.org" }
+      - run: npm publish
 ```
+
+Publishing is its own job because it holds a different credential: the token that can publish to
+npm never shares a job with the token that can push to the repository.
 
 **Publish without a stored token.** The recipe uses npm's
 [trusted publishing](https://docs.npmjs.com/trusted-publishers): npm accepts the job's
 short-lived OIDC token in place of a secret, and attaches provenance to the release on its own.
 On npmjs.com, open the package's **Settings → Trusted publishing**, choose GitHub Actions, and
-enter your repository and this workflow's file name (`release.yml`). The job needs
+enter your repository and this workflow's file name (`release.yml`). The publish job needs
 `id-token: write` (above) and npm 11.5.1 or later. A stored `NPM_TOKEN` also works, but npm no
 longer issues tokens that last: a write token expires within 90 days, and the release breaks
 when it does.
@@ -409,7 +498,7 @@ when it does.
 **The release ritual for a library:**
 1. Edit `package.json` `version` to the SemVer you intend (e.g. `1.5.0` for a new feature).
 2. Merge/push to `main`.
-3. The Action tags `v1.5.0` and (via the `if`) `npm publish` releases `1.5.0`.
+3. The Action tags `v1.5.0`, and the publish job releases `1.5.0`.
 4. If you forget to bump, the tag `v1.5.0` already exists → the Action **fails loudly**. That is the
    guard, not a bug: bump `package.json` and push again.
 
@@ -473,10 +562,15 @@ have them share one tag namespace: both start at `v0.1.0`, the second to land fa
 exists-guard, and the app's "highest `vMM.*`" scan would count the library's tags. The
 **`tag-prefix`** input gives each releasable its own namespace. The recipe:
 
-**One workflow per releasable, both at the repo root.** Each has its own
+**One pull-request gate for the whole repository.** A single `ci.yml`, shaped like Recipe A's,
+runs every package's checks as steps of its one `validate (merge gate)` job (each step with its own
+`working-directory:`). Two packages are not a reason for two check jobs.
+
+**One release workflow per releasable, both at the repo root.** Each has its own
 `defaults.run.working-directory`, its own `manifest:` and `package-json:`, its own `tag-prefix`
 (the library's; the app keeps the bare `v`), and a `paths:` filter so a change under one
-directory does not cut a release of the other. The app:
+directory does not cut a release of the other. Each runs its own package's checks in the job
+that tags, as in Recipes A and B. The app:
 
 ```yaml
 # .github/workflows/release-service.yml
@@ -486,7 +580,7 @@ on:
     branches: [main, dev]
     paths: ['packages/service/**', '.github/workflows/release-service.yml']
 permissions:
-  contents: write
+  contents: read
 concurrency:
   # One group per RELEASABLE, never per branch. The app and the library get SEPARATE groups:
   # their tag namespaces cannot collide, so neither should ever wait on the other.
@@ -499,19 +593,36 @@ defaults:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      is-env: ${{ steps.release.outputs.is-env }}
+      tag: ${{ steps.release.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: packages/service/package-lock.json
+      - run: npm ci
+      - run: npm run check     # the service's checks; a failed check leaves no tag
       - id: release
         uses: jeff-fichtner/snackbyte-release-flow-action@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4
         with:
           manifest: packages/service/environments.json
           package-json: packages/service/package.json   # MAJOR.MINOR from the service's own file
           # tag-prefix omitted: the app owns the bare v0.1.N namespace
-      - if: steps.release.outputs.is-env == 'true'
-        run: echo "Deploy $TAG"   # v0.1.N / v0.1.N-dev
+  deploy:
+    needs: release
+    if: needs.release.outputs.is-env == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: echo "Deploy $TAG"   # v0.1.N / v0.1.N-dev; runs in packages/service, so check out first
         env:
-          TAG: ${{ steps.release.outputs.tag }}
+          TAG: ${{ needs.release.outputs.tag }}
 ```
 
 The library:
@@ -524,8 +635,7 @@ on:
     branches: [main]
     paths: ['packages/client-node/**', '.github/workflows/release-client-node.yml']
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   # The library's own group — separate from the app's, per the note in release-service.yml.
   group: release-client-node   # keyed to this releasable, whose namespace is `client-node-v…`
@@ -537,15 +647,20 @@ defaults:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      is-env: ${{ steps.release.outputs.is-env }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
-          registry-url: "https://registry.npmjs.org"
           cache: npm
           cache-dependency-path: packages/client-node/package-lock.json
+      - run: npm ci
+      - run: npm run check     # the library's checks; a failed check leaves no tag
       - id: release
         uses: jeff-fichtner/snackbyte-release-flow-action@1b084a1fe780d9208c3eee923ef1a9494b0938bd # v1.2.4
         with:
@@ -553,8 +668,20 @@ jobs:
           package-json: packages/client-node/package.json   # the version that gets tagged + published
           version-strategy: package-json
           tag-prefix: client-node-    # tags client-node-v<version>; invisible to the app's scans
-      - if: steps.release.outputs.is-env == 'true'
-        run: npm publish --access public   # publishes packages/client-node's version
+  publish:
+    needs: release
+    if: needs.release.outputs.is-env == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - run: npm publish --access public   # publishes packages/client-node's version
 ```
 
 What the prefix does and does not do:
