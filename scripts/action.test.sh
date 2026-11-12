@@ -15,6 +15,7 @@
 #   I1  env push     -> is-env=true, version=MM.0, tag=vMM.0<suffix> matching derivation
 #   I2  non-env push -> is-env=false, version/tag unset, NO tag created
 #   I3  env push with tag-prefix -> tag carries the prefix, version does not (feature 004)
+#   I4  mode=lookup on a promotion -> reports version/tag/released-as, tags nothing; tag agrees (006)
 #   INV-1/SC-004: after an env push, exactly one new tag, zero new commits, unchanged branch head.
 set -uo pipefail
 
@@ -52,6 +53,11 @@ read_action() {
       outTag:    has(/tag:[\s\S]*?steps\.derive\.outputs\.tag/),
       branchMappedResolve: has(/id:\s*resolve[\s\S]*?BRANCH:\s*\$\{\{\s*inputs\.branch\s*\}\}[\s\S]*?id:\s*derive/),
       branchMappedDerive:  has(/id:\s*derive[\s\S]*?BRANCH:\s*\$\{\{\s*inputs\.branch\s*\}\}/),
+      modeMappedDerive:      has(/id:\s*derive[\s\S]*?MODE:\s*\$\{\{\s*inputs\.mode\s*\}\}/),
+      modeInputDefault:      has(/\n  mode:[\s\S]*?default:\s*"tag"/),
+      outReleasedAs:         has(/released-as:[\s\S]*?steps\.derive\.outputs\.released-as/),
+      expectMappedDerive:    has(/id:\s*derive[\s\S]*?EXPECT_TAG:\s*\$\{\{\s*inputs\.expect-tag\s*\}\}/),
+      expectInputDefault:    has(/\n  expect-tag:[\s\S]*?default:\s*""/),
       // An expression inside run: is pasted into the shell script before bash parses it, so a
       // branch name carrying $(...) would execute. Inputs reach the scripts through env: only.
       noExprInRun: !y.split("\n").some(l => /^\s*run:.*\$\{\{/.test(l)),
@@ -83,27 +89,33 @@ assert "wire: output tag"              "true" "$(jq_get outTag)"
 assert "wire: branch->resolve env"     "true" "$(jq_get branchMappedResolve)"
 assert "wire: branch->derive env"      "true" "$(jq_get branchMappedDerive)"
 assert "wire: no expression in run:"   "true" "$(jq_get noExprInRun)"
+assert "wire: mode->derive env"        "true" "$(jq_get modeMappedDerive)"
+assert "wire: mode default tag"        "true" "$(jq_get modeInputDefault)"
+assert "wire: output released-as"      "true" "$(jq_get outReleasedAs)"
+assert "wire: expect-tag->derive env"  "true" "$(jq_get expectMappedDerive)"
+assert "wire: expect-tag default empty" "true" "$(jq_get expectInputDefault)"
 
 # --- Behavioral replay: execute the step semantics exactly as action.yml declares them. ---
-# invoke_action <workdir> <branch>  -> echoes "is-env|version|tag" after replaying both steps with
+# invoke_action <workdir> <branch>  -> echoes "is-env|version|tag|released-as" after replaying both steps with
 # the real env mapping and the real gate. Uses the shipped scripts via their real paths.
 invoke_action() {
-  local wd="$1" branch="$2" manifest="${3:-./environments.json}" mm="${4:-}" prefix="${5:-}"
+  local wd="$1" branch="$2" manifest="${3:-./environments.json}" mm="${4:-}" prefix="${5:-}" mode="${6:-tag}"
   ( cd "$wd"
     local gho; gho="$(mktemp)"
     # Step 1 (resolve): env MANIFEST=<inputs.manifest>  (as action.yml maps it)
     GITHUB_OUTPUT="$gho" MANIFEST="$manifest" bash "$ROOT/scripts/resolve-env.sh" "$branch" >/dev/null 2>&1
     local is_env; is_env="$(sed -nE 's/^is-env=(.*)$/\1/p' "$gho")"
-    local version="" tag=""
+    local version="" tag="" released_as=""
     # Step 2 (derive): the real gate — only if is-env == 'true'
     if [ "$is_env" = "true" ]; then
       local gho2; gho2="$(mktemp)"
-      if GITHUB_OUTPUT="$gho2" MANIFEST="$manifest" MAJOR_MINOR="$mm" TAG_PREFIX="$prefix" bash "$ROOT/scripts/derive-version.sh" "$branch" >/dev/null 2>&1; then
+      if GITHUB_OUTPUT="$gho2" MANIFEST="$manifest" MAJOR_MINOR="$mm" TAG_PREFIX="$prefix" MODE="$mode" bash "$ROOT/scripts/derive-version.sh" "$branch" >/dev/null 2>&1; then
         version="$(sed -nE 's/^version=(.*)$/\1/p' "$gho2")"
         tag="$(sed -nE 's/^tag=(.*)$/\1/p' "$gho2")"
+        released_as="$(sed -nE 's/^released-as=(.*)$/\1/p' "$gho2")"
       fi
     fi
-    echo "${is_env}|${version}|${tag}"
+    echo "${is_env}|${version}|${tag}|${released_as}"
   )
 }
 
@@ -129,7 +141,7 @@ commits_before="$(git -C "$W" rev-list --count HEAD)"
 head_before="$(git -C "$W" rev-parse HEAD)"
 tags_before="$(git -C "$W" tag | wc -l | tr -d ' ')"
 OUT="$(invoke_action "$W" main)"
-assert "I1 env push output" "true|0.1.0|v0.1.0" "$OUT"
+assert "I1 env push output" "true|0.1.0|v0.1.0|" "$OUT"
 commits_after="$(git -C "$W" rev-list --count HEAD)"
 head_after="$(git -C "$W" rev-parse HEAD)"
 tags_after="$(git -C "$W" tag | wc -l | tr -d ' ')"
@@ -168,7 +180,7 @@ assert "I1b identity-less tag created" "v0.1.0" "$tag_ident"
 W2="$(mk_repo)"
 tags_before2="$(git -C "$W2" tag | wc -l | tr -d ' ')"
 OUT2="$(invoke_action "$W2" feature-x)"
-assert "I2 non-env push output" "false||" "$OUT2"
+assert "I2 non-env push output" "false|||" "$OUT2"
 tags_after2="$(git -C "$W2" tag | wc -l | tr -d ' ')"
 assert "I2 no tag created" "$tags_before2" "$tags_after2"
 
@@ -176,7 +188,19 @@ assert "I2 no tag created" "$tags_before2" "$tags_after2"
 #   action.yml maps it; the tag output carries the prefix, the version output does not.
 W3="$(mk_repo)"
 OUT3="$(invoke_action "$W3" main ./environments.json "" client-node-)"
-assert "I3 prefixed env push output" "true|0.1.0|client-node-v0.1.0" "$OUT3"
+assert "I3 prefixed env push output" "true|0.1.0|client-node-v0.1.0|" "$OUT3"
+
+# I4 — build once (feature 006): on a promotion, the replayed look-up reports the reused number
+#   and where it came from and tags nothing; the replayed tag step then agrees and makes that tag.
+W4="$(mk_repo)"
+( cd "$W4"; echo promo > promo.txt; git add promo.txt; git commit -q -m promo; git tag -a v0.1.3-dev -m x )
+tags_before4="$(git -C "$W4" tag | sort | tr '\n' ',')"
+LOOK4="$(invoke_action "$W4" main ./environments.json "" "" lookup)"
+assert "I4 lookup output"       "true|0.1.3|v0.1.3|v0.1.3-dev" "$LOOK4"
+assert "I4 lookup tags nothing" "$tags_before4" "$(git -C "$W4" tag | sort | tr '\n' ',')"
+TAG4="$(invoke_action "$W4" main ./environments.json "" "" tag)"
+assert "I4 tag agrees"          "$LOOK4" "$TAG4"
+assert "I4 tag created"         "v0.1.3,v0.1.3-dev," "$(git -C "$W4" tag | sort | tr '\n' ',')"
 
 echo ""
 echo "action.yml interface: PASS=${PASS} FAIL=${FAIL}"

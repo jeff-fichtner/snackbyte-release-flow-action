@@ -49,6 +49,21 @@ inputs:
       ending in '-'; anything else is refused. The 'version' output never carries the prefix.
     required: false
     default: ""
+  mode:
+    description: >-
+      'tag' (default) derives the version and creates and pushes the tag. 'lookup' runs the same
+      derivation, every refusal included, and reports the outputs without creating anything; it
+      needs no write permission. Look up first to learn whether this tree is already released
+      (released-as) before spending checks and a build, then tag at the end of the job.
+    required: false
+    default: "tag"
+  expect-tag:
+    description: >-
+      The tag a lookup step in the same job reported (steps.<id>.outputs.tag). When set, the Action
+      refuses to create any other tag, so a job that skipped its checks on the look-up's word never
+      tags a different number. Empty (default) skips the comparison.
+    required: false
+    default: ""
 
 outputs:
   is-env:
@@ -60,6 +75,13 @@ outputs:
   tag:
     description: "The derived <prefix>vMM.P<suffix> tag (set only for an environment push)."
     value: ${{ steps.derive.outputs.tag }}
+  released-as:
+    description: >-
+      An existing tag that already carries this version's number on this exact tree (the first by
+      name), when the number is reused from an earlier release; empty when the number is new, and
+      always empty under version-strategy package-json. A promotion uses it to find the build its
+      upstream environment made.
+    value: ${{ steps.derive.outputs.released-as }}
 
 runs:
   using: "composite"
@@ -74,7 +96,8 @@ runs:
         MANIFEST: ${{ inputs.manifest }}
       run: bash "$GITHUB_ACTION_PATH/scripts/resolve-env.sh" "$BRANCH"
 
-    # 2. derive-version — only for an environment push. Creates and pushes the tag; sets version/tag.
+    # 2. derive-version — only for an environment push. Sets version/tag/released-as; in tag mode
+    #    it also creates and pushes the tag, in lookup mode it creates nothing.
     - id: derive
       if: steps.resolve.outputs.is-env == 'true'
       shell: bash
@@ -85,4 +108,6 @@ runs:
         MAJOR_MINOR: ${{ inputs.major-minor }}
         VERSION_STRATEGY: ${{ inputs.version-strategy }}
         TAG_PREFIX: ${{ inputs.tag-prefix }}
+        MODE: ${{ inputs.mode }}
+        EXPECT_TAG: ${{ inputs.expect-tag }}
       run: bash "$GITHUB_ACTION_PATH/scripts/derive-version.sh" "$BRANCH"

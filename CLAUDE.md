@@ -11,7 +11,7 @@ never a commit**. It is the extraction of the manifest-driven release machinery 
 A composite GitHub Action, consumed at `@v1`:
 
 - Logic: `scripts/derive-version.sh` (derive-version), `scripts/resolve-env.sh` (resolve-env)
-- Interface: `action.yml` (composite; inputs `branch`/`manifest`/`package-json`/`major-minor`/`version-strategy`/`tag-prefix`, outputs `is-env`/`version`/`tag`)
+- Interface: `action.yml` (composite; inputs `branch`/`manifest`/`package-json`/`major-minor`/`version-strategy`/`tag-prefix`/`mode`/`expect-tag`, outputs `is-env`/`version`/`tag`/`released-as`)
 - Tests: `scripts/*.test.sh`, run via `npm run test:release`; CI in `.github/workflows/test.yml`
 - Consumer wiring: `CONSUMING.md` (app + library recipes, copy-paste)
 - The Action self-versions with its own flow (`.github/workflows/release.yml`, `build-id`).
@@ -26,7 +26,7 @@ resolve-env, the manifest, tag-only, and every guard are shared and strategy-ind
   SemVer; a build counter can't be a compatibility promise). The existing-tag guard doubles as the
   "bump package.json before re-releasing" rule.
 
-Specs live in `specs/`. A Marketplace listing and an inline-JSON manifest form remain out of scope
+Specs live in `specs/`; decisions to revisit at a feature's close are in `specs/reviews.md`. A Marketplace listing and an inline-JSON manifest form remain out of scope
 (`specs/003-marketplace-release/`).
 
 ## Extraction source

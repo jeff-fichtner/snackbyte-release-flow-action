@@ -22,7 +22,9 @@
 # (tag prefix) and PJ-default/PJ1-PJ2/X3 (package-json path) are feature 004's — see
 # specs/004-tag-prefix/contracts/versioning.md. Rows R1-R4 are feature 005's self-healing reuse
 # after a duplicated build id, and PORT1 is its portability guard — see
-# specs/005-build-id-race/contracts/versioning.md.
+# specs/005-build-id-race/contracts/versioning.md. Rows L1-L12 are feature 006's look-up mode and
+# released-as output (L6b, L13-L14: blank mode, expect-tag) — see
+# specs/006-build-once-lookup/contracts/interface.md.
 set -uo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/derive-version.sh"
@@ -100,6 +102,22 @@ derive_out() {
   fi
 }
 
+# derive_full: like derive_out, plus the `released-as` output — "version|tag|released-as" — for the
+# build-once rows (feature 006). Pass MODE=lookup as an extra arg to run the look-up.
+derive_full() {
+  local branch="$1"; shift
+  local gho
+  gho="$(mktemp)"
+  if GITHUB_OUTPUT="$gho" env "$@" "$SCRIPT" "$branch" >/dev/null 2>&1; then
+    echo "$(sed -nE 's/^version=(.*)$/\1/p' "$gho")|$(sed -nE 's/^tag=(.*)$/\1/p' "$gho")|$(sed -nE 's/^released-as=(.*)$/\1/p' "$gho")"
+  else
+    echo "FAIL"
+  fi
+}
+
+# tagset -> every tag in the repo, sorted, comma-joined: the rows proving a look-up created nothing.
+tagset() { git tag | sort | tr '\n' ','; }
+
 # derive_log: like derive, but prints the run's DIAGNOSTIC output (stdout+stderr) instead of the
 # tag — for rows asserting the duplicate-build-id annotation. It must capture stdout, not just
 # stderr: GitHub reads workflow commands (`::warning::`) from stdout, so that is where
@@ -119,7 +137,7 @@ assert() {
   if [ "$2" = "$3" ]; then echo x >> "$PASS_F"; printf '  ok   %-4s expected %-16s\n' "$1" "$2"
   else echo x >> "$FAIL_F"; printf '  FAIL %-4s expected %-16s got %s\n' "$1" "$2" "$3"; fi
 }
-export -f write_manifest fresh_repo commit derive derive_out derive_log tree_of assert
+export -f write_manifest fresh_repo commit derive derive_out derive_full tagset derive_log tree_of assert
 
 echo "Deriving against package.json MAJOR.MINOR = ${PKG_MM} (stand-ins P/'' A/-a C/-c)"
 
@@ -602,6 +620,119 @@ W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
   commit; git tag -a "v${PKG_MM}.2" -m x         # tree A — BARE 2, a different namespace
   commit; git tag -a "${PFX}v${PKG_MM}.2-a" -m x # tree B (HEAD) — prefixed 2
   assert R4p "${PFX}v${PKG_MM}.2" "$(derive main TAG_PREFIX="$PFX")" )
+
+# ------------------------------------------------------------------------------------------------
+# Feature 006 — build once: MODE=lookup runs the whole derivation and creates nothing, and
+# `released-as` names the tag a reused number came from. See
+# specs/006-build-once-lookup/contracts/interface.md.
+# ------------------------------------------------------------------------------------------------
+
+# L1 — a promotion is known before the checks: tree T carries v0.1.2-a; looking up main at T
+#   reports the number, the tag it would make, and where the number came from, and tags nothing.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "v${PKG_MM}.2-a" -m x
+  before="$(tagset)"
+  out="$(derive_full main MODE=lookup)"
+  assert L1 "${PKG_MM}.2|v${PKG_MM}.2|v${PKG_MM}.2-a|${before}" "${out}|$(tagset)" )
+
+# L2 — new code: a tree no tag carries reports the number tag mode would mint and an EMPTY
+#   released-as, so the checks and the build run. Nothing is tagged.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  git tag -a "v${PKG_MM}.0" -m x; commit
+  before="$(tagset)"
+  out="$(derive_full main MODE=lookup)"
+  assert L2 "${PKG_MM}.1|v${PKG_MM}.1||${before}" "${out}|$(tagset)" )
+
+# L3 — look-up then tag AGREE, and the tag step creates exactly the reported tag, nothing else.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "v${PKG_MM}.2-a" -m x
+  before="$(tagset)"
+  look="$(derive_full main MODE=lookup)"
+  tagged="$(derive_full main)"
+  assert L3 "${look}|v${PKG_MM}.2,v${PKG_MM}.2-a," "${tagged}|$(tagset)" )
+
+# L4 — an already-released re-run (B7 state) is refused by the look-up too, before any check runs.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "v${PKG_MM}.2-a" -m x; git tag -a "v${PKG_MM}.2" -m x
+  assert L4 "FAIL" "$(derive_full main MODE=lookup)" )
+
+# L5 — a shallow clone is refused by the look-up, as by tag mode. file:// makes --depth apply.
+W="$(fresh_repo)"; ( cd "$W"
+  commit; commit
+  sh="$(mktemp -d)/shallow"
+  git clone -q --depth 1 "file://$W" "$sh" 2>/dev/null
+  ( cd "$sh"; git checkout -q -B main
+    if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+      assert L5 "FAIL" "$(derive_full main MODE=lookup)"
+    else
+      echo x >> "$FAIL_F"; echo "  FAIL L5   (could not make a shallow clone to test against)"
+    fi ) )
+
+# L6 — an unknown mode is refused before any work, like an unknown strategy.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  assert L6 "FAIL|" "$(derive_full main MODE=bogus)|$(tagset)" )
+
+# L6b — an explicit BLANK mode is refused, not read as tag: a blank meant as lookup (an unset
+#   workflow variable) would otherwise tag before the checks. Unset still means tag (every B row).
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  assert L6b "FAIL|" "$(derive_full main MODE=)|$(tagset)" )
+
+# L7 — several environments already carry the number on the tree: released-as is the first by
+#   name, every time (v0.1.2-a before v0.1.2-c, whichever was tagged first).
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "v${PKG_MM}.2-c" -m x; git tag -a "v${PKG_MM}.2-a" -m x
+  assert L7 "${PKG_MM}.2|v${PKG_MM}.2|v${PKG_MM}.2-a" "$(derive_full main MODE=lookup)" )
+
+# L8 — tag mode reports released-as too, so a workflow that tags first can still find the build.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "v${PKG_MM}.2-a" -m x
+  assert L8 "${PKG_MM}.2|v${PKG_MM}.2|v${PKG_MM}.2-a" "$(derive_full main)" )
+
+# L9 — package-json never reuses, so released-as is empty even on a tree carrying a suffixed tag
+#   of the same version; the look-up tags nothing.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  git tag -a "v${PKG_MM}.0-a" -m x
+  before="$(tagset)"
+  out="$(derive_full main MODE=lookup VERSION_STRATEGY=package-json)"
+  assert L9 "${PKG_MM}.0|v${PKG_MM}.0||${before}" "${out}|$(tagset)" )
+
+# L10 — prefixed namespace: released-as carries the prefix, like tag; bare tags stay invisible.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "v${PKG_MM}.7-a" -m x; git tag -a "${PFX}v${PKG_MM}.2-a" -m x
+  assert L10 "${PKG_MM}.2|${PFX}v${PKG_MM}.2|${PFX}v${PKG_MM}.2-a" "$(derive_full main MODE=lookup TAG_PREFIX="$PFX")" )
+
+# L11 — the look-up writes nothing, so it needs no git identity and no reachable origin: a runner
+#   with a read-only token and no identity configured still gets an answer.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "v${PKG_MM}.2-a" -m x
+  git config --unset user.email; git config --unset user.name; git remote remove origin
+  out="$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null derive_full main MODE=lookup)"
+  assert L11 "${PKG_MM}.2|v${PKG_MM}.2|v${PKG_MM}.2-a" "$out" )
+
+# L12 — the duplicate-heal state (R1): the look-up gives tag mode's answer, a fresh v0.1.3, and an
+#   empty released-as, because the number is minted, not reused.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "v${PKG_MM}.2" -m x
+  commit; git tag -a "v${PKG_MM}.2-a" -m x
+  look="$(derive_full main MODE=lookup)"
+  tagged="$(derive_full main)"
+  assert L12 "${PKG_MM}.3|v${PKG_MM}.3||${PKG_MM}.3|v${PKG_MM}.3|" "${look}|${tagged}" )
+
+# L13 — expect-tag that matches the look-up: the tag step creates the reported tag.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  commit; git tag -a "v${PKG_MM}.2-a" -m x
+  look_tag="$(derive_full main MODE=lookup | cut -d'|' -f2)"
+  assert L13 "${PKG_MM}.2|v${PKG_MM}.2|v${PKG_MM}.2-a" "$(derive_full main EXPECT_TAG="$look_tag")" )
+
+# L14 — the tags change between look-up and tag (the reused tag disappears): the tag step would
+#   mint a fresh number for a tree whose checks were skipped. expect-tag refuses and tags nothing.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  git tag -a "v${PKG_MM}.5" -m x
+  commit; git tag -a "v${PKG_MM}.2-a" -m x
+  look_tag="$(derive_full main MODE=lookup | cut -d'|' -f2)"
+  git tag -d "v${PKG_MM}.2-a" >/dev/null
+  before="$(tagset)"
+  assert L14 "v${PKG_MM}.2|FAIL|${before}" "${look_tag}|$(derive_full main EXPECT_TAG="$look_tag")|$(tagset)" )
 
 echo ""
 P="$(wc -l < "$PASS_F" | tr -d ' ')"; F="$(wc -l < "$FAIL_F" | tr -d ' ')"

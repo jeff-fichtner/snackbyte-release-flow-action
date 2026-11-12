@@ -27,14 +27,15 @@ jobs:
           node-version: "24"
 
       # The bash acceptance suite: derivation matrix B1–B15 + extraction-delta P3–P5,
-      # resolve-env P1–P2, one-row-edit proof, and the action.yml interface replay (I1–I2).
+      # resolve-env P1–P2, one-row-edit proof, the look-up rows L1–L14, and the action.yml
+      # interface replay (I1–I4).
       - name: Run test:release
         run: npm run test:release
 
       # True end-to-end: invoke the REAL composite Action via `uses: ./` against a scratch
       # manifest and assert its outputs — proving the action.yml wiring works on a real runner (not
       # just the local interface replay). The token is read-only, so no tag reaches this repo;
-      # asserts is-env for both an env and a non-env branch.
+      # asserts is-env for both an env and a non-env branch, then a look-up (mode: lookup).
       - name: Write a scratch 2-env manifest
         run: |
           cat > /tmp/envs.json <<'JSON'
@@ -69,3 +70,27 @@ jobs:
         run: |
           echo "is-env=${{ steps.env.outputs.is-env }}"
           test "${{ steps.env.outputs.is-env }}" = "true"
+
+      # Build once (feature 006): a real look-up on a runner, with this job's read-only token. A
+      # local, unpushed tag stands in for staging's release of this tree; the look-up for main must
+      # report it as released-as and create nothing. Its own 8.8 line keeps it clear of the step above.
+      - name: Stand in for a staging release of this tree
+        run: git tag v8.8.4-dev
+      - id: lookup
+        uses: ./
+        with:
+          branch: main
+          manifest: /tmp/envs.json
+          major-minor: "8.8"
+          mode: lookup
+      - name: Assert the look-up reports the release and tags nothing
+        env:
+          VERSION: ${{ steps.lookup.outputs.version }}
+          TAG: ${{ steps.lookup.outputs.tag }}
+          RELEASED_AS: ${{ steps.lookup.outputs.released-as }}
+        run: |
+          echo "version=$VERSION tag=$TAG released-as=$RELEASED_AS"
+          test "$VERSION" = "8.8.4"
+          test "$TAG" = "v8.8.4"
+          test "$RELEASED_AS" = "v8.8.4-dev"
+          test "$(git tag -l 'v8.8.*')" = "v8.8.4-dev"
