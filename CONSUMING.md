@@ -619,6 +619,129 @@ Channels map to npm dist-tags via `tagSuffix`: a `next` channel with `tagSuffix:
 
 ---
 
+## Consuming from an app with parts (`web/`, `server/`)
+
+An app composed by the `snackbyte-base` hub is one app made of parts: a front end in `web/`, a
+server in `server/`, each its own project with its own dependencies and checks, and a root that
+runs them together. It is still a deployable app at the repo root, so it takes Recipe A (or Build
+once) with `build-id`. Only the install and check steps change.
+
+What the root holds, and what it means for CI:
+
+- **`package.json` with no dependencies.** It carries the version line and the scripts that run
+  every part: `npm run setup` installs each part, `npm run check:all` runs each part's checks.
+  Its `version` is MAJOR.MINOR only (`"0.1"`), which is all `build-id` reads: the first release is
+  `v0.1.0`.
+- **`package-lock.json` with nothing in it.** It exists so the root `npm ci` works. That step
+  installs nothing today and keeps working the day the root gains a dependency.
+- **`environments.json`.** The parts have none of their own, so the Action's defaults (the root
+  manifest, the root `package.json`) are already right: no `manifest:` or `package-json:` inputs.
+- **`.nvmrc`.** The Node version the app runs on. The recipe reads it, so CI and development
+  cannot drift apart.
+
+`.github/workflows/ci.yml` (a Node server):
+
+```yaml
+name: ci
+on:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true  # a new push to the PR replaces the run in flight
+jobs:
+  validate:
+    name: validate (merge gate)   # the check branch protection requires
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            server/package-lock.json
+      - run: npm ci             # the root: no dependencies, so this installs nothing
+      - run: npm run setup      # each part's install
+      - run: npm run check:all  # each part's checks: every check, one job
+```
+
+`.github/workflows/release.yml` is Recipe A's with the same three steps in the job that tags:
+
+```yaml
+name: release
+on:
+  push:
+    branches: [main, dev]
+permissions:
+  contents: read
+concurrency:
+  group: release            # per releasable, as in Recipe A
+  cancel-in-progress: false
+  queue: max
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # push the tag
+    outputs:
+      is-env: ${{ steps.release.outputs.is-env }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            server/package-lock.json
+      - run: npm ci
+      - run: npm run setup
+      - run: npm run check:all  # the push-side gate: a failed check leaves no tag
+      - id: release
+        uses: jeff-fichtner/snackbyte-release-flow-action@01d5fa53356ad4b04b2388a43eda867cc947b670 # v1.2.7
+  deploy:
+    needs: release
+    if: needs.release.outputs.is-env == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Deploy $TAG"   # your deploy, keyed off the tag
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+```
+
+**A C# server** (`server/` holds a .NET solution, not a `package-lock.json`) changes two things,
+in both files. The npm cache lists only the front end's lockfile, and the .NET SDK is installed
+from the version `server/global.json` names, before `npm run setup` (whose server half is
+`dotnet restore`):
+
+```yaml
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: server/global.json   # the SDK the server builds with, from one place
+      - run: npm ci
+      - run: npm run setup
+      - run: npm run check:all
+```
+
+Reading the version from `global.json` means moving the server to another .NET release is a
+one-file change, and CI follows it. The NuGet cache stays off: `setup-dotnet` keys it on
+`packages.lock.json` files, which the server does not commit, and its restore takes seconds.
+
+**Build once** works the same way: the `setup-node`, `setup-dotnet`, install, setup and check steps
+are the steps that build and check, so each carries the look-up's `if:`.
+
+---
+
 ## Consuming from a subdirectory (the app is not at the repo root)
 
 GitHub only discovers workflows in the **repo root** `.github/workflows/`, so a monorepo runs
