@@ -317,6 +317,16 @@ W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
   d2="$(derive main VERSION_STRATEGY=build-id)"    # explicit build-id
   assert BDdef "$d1" "$d2" )
 
+# H1-H2 — an app with parts (request #cc1e4b): the root package.json holds only a MAJOR.MINOR version
+#   line ("0.1") and no dependencies. build-id reads it as the 0.1 line; package-json refuses it,
+#   since a two-part version is not SemVer.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  printf '{"name":"app","version":"0.1","private":true,"scripts":{"setup":"true"}}\n' > package.json
+  git add package.json; git commit -q -m "app root"
+  assert H1 "0.1.0|v0.1.0" "$(derive_out main)"
+  git tag -d v0.1.0 >/dev/null 2>&1; git push -q origin :refs/tags/v0.1.0 >/dev/null 2>&1
+  assert H2 "FAIL" "$(derive main VERSION_STRATEGY=package-json)" )
+
 # S1 — package-json, default channel: tag the declared SemVer verbatim -> v1.4.0
 W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0
   assert S1 "v1.4.0" "$(derive main VERSION_STRATEGY=package-json)" )
