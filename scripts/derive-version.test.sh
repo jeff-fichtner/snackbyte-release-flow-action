@@ -24,7 +24,8 @@
 # after a duplicated build id, and PORT1 is its portability guard — see
 # specs/005-build-id-race/contracts/versioning.md. Rows L1-L12 are feature 006's look-up mode and
 # released-as output (L6b, L13-L14: blank mode, expect-tag) — see
-# specs/006-build-once-lookup/contracts/interface.md.
+# specs/006-build-once-lookup/contracts/interface.md. Rows W1-W3 are the refused tag push: GitHub's
+# refusal of a tag on a commit whose workflow files no branch tip has (request #c31846).
 set -uo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/derive-version.sh"
@@ -733,6 +734,41 @@ W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
   git tag -d "v${PKG_MM}.2-a" >/dev/null
   before="$(tagset)"
   assert L14 "v${PKG_MM}.2|FAIL|${before}" "${look_tag}|$(derive_full main EXPECT_TAG="$look_tag")|$(tagset)" )
+
+# W1-W3 — the push is refused (request #c31846). GitHub refuses a GITHUB_TOKEN tag on a commit whose
+#   workflow files no branch tip has; a pre-receive hook on the local origin stands in for it.
+# refuse_tags <work-dir> <message> -> the origin rejects every push, printing <message>.
+refuse_tags() {
+  printf '#!/bin/sh\necho "%s" >&2\nexit 1\n' "$2" > "$1/../origin.git/hooks/pre-receive"
+  chmod +x "$1/../origin.git/hooks/pre-receive"
+}
+GH_REFUSAL='refusing to allow a GitHub App to create or update workflow `.github/workflows/ci.yml` without `workflows` permission'
+OAUTH_REFUSAL='refusing to allow an OAuth App to create or update workflow `.github/workflows/ci.yml` without `workflow` scope'
+export GH_REFUSAL OAUTH_REFUSAL
+export -f refuse_tags
+
+# W1 — GitHub App refusal: the step fails, names the cause and the way out, and no tag reaches origin.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; refuse_tags "$W" "$GH_REFUSAL"
+  log="$(derive_log main)"
+  git tag -d "v${PKG_MM}.0" >/dev/null 2>&1
+  rc="$(derive main)"
+  case "$log" in *"::error title=Tag refused: workflow files changed since this commit::GitHub refused v${PKG_MM}.0."*) e=yes ;; *) e=no ;; esac
+  case "$log" in *"git push origin v${PKG_MM}.0"*) h=yes ;; *) h=no ;; esac
+  assert W1 "FAIL|yes|yes|" "${rc}|${e}|${h}|$(git ls-remote --tags origin)" )
+
+# W2 — the OAuth wording of the same refusal gets the same explanation.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; refuse_tags "$W" "$OAUTH_REFUSAL"
+  log="$(derive_log main)"
+  case "$log" in *"::error title=Tag refused"*) e=yes ;; *) e=no ;; esac
+  assert W2 "yes|" "${e}|$(git ls-remote --tags origin)" )
+
+# W3 — any other refusal: the step fails with git's own output and no workflow explanation.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; refuse_tags "$W" "tag rule says no"
+  log="$(derive_log main)"
+  git tag -d "v${PKG_MM}.0" >/dev/null 2>&1
+  case "$log" in *"::error title=Tag refused"*) e=yes ;; *) e=no ;; esac
+  case "$log" in *"tag rule says no"*) g=yes ;; *) g=no ;; esac
+  assert W3 "FAIL|no|yes" "$(derive main)|${e}|${g}" )
 
 echo ""
 P="$(wc -l < "$PASS_F" | tr -d ' ')"; F="$(wc -l < "$FAIL_F" | tr -d ' ')"

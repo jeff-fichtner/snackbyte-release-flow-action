@@ -326,7 +326,22 @@ if ! git config user.email >/dev/null 2>&1; then
 fi
 
 git tag -a "$tag" -m "Release ${tag}"
-git push origin "$tag" # push the TAG only — never a commit, never a branch
+
+# Push the TAG only — never a commit, never a branch. GitHub refuses a new ref from a GitHub App
+# token (the job's GITHUB_TOKEN) or an OAuth token without the workflow scope when the commit's
+# .github/workflows files match no branch tip: the release branch has moved past this commit and a
+# later commit changed a workflow. No GITHUB_TOKEN permission grants it and the REST API refuses it
+# the same way, so the Action cannot push this tag; it names the cause and the way out instead.
+if ! push_out="$(git push origin "$tag" 2>&1)"; then
+  printf '%s\n' "$push_out" >&2
+  if grep -qE 'refusing to allow an? (GitHub|OAuth) App to create or update workflow' <<<"$push_out"; then
+    head_sha="$(git rev-parse HEAD)"
+    printf '::error title=Tag refused: workflow files changed since this commit::GitHub refused %s. Its commit %s has workflow files (.github/workflows) that no branch tip has any more: %s has moved past this commit, and a later commit changed a workflow. A tag pushed with the job'"'"'s GITHUB_TOKEN cannot do that, and no permission in the workflow allows it; re-running this job fails the same way. If a later push of %s has been tagged, nothing is lost: that release supersedes this one. To release this commit anyway, push the tag yourself with a token that can change workflows: git tag -a %s %s -m "Release %s" && git push origin %s. See "Tag refused after a workflow change" in CONSUMING.md.\n' \
+      "$tag" "${head_sha:0:7}" "$BRANCH" "$BRANCH" "$tag" "$head_sha" "$tag" "$tag"
+  fi
+  exit 1
+fi
+printf '%s\n' "$push_out" >&2
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   {
