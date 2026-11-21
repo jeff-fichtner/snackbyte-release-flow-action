@@ -313,6 +313,10 @@ The tag is pushed with the default `GITHUB_TOKEN`. A `GITHUB_TOKEN`-pushed tag d
 trigger another workflow run (GitHub's recursion guard). That is fine, and deliberate: gate your
 deploy as a chained `needs:` job in the *same* run, so no second event is required.
 
+One case is beyond the `GITHUB_TOKEN`: a tag on a commit that the branch has already moved past,
+when a later commit changed a workflow file. It is rare, nothing is lost when it happens, and it
+needs no standing token. **Tag refused after a workflow change** under Gotchas says what to do.
+
 ---
 
 ## Keep the Actions bill down
@@ -851,6 +855,25 @@ this number on this exact tree, e.g. `v1.4.7-dev` on a promotion; empty for new 
 - **The version must be a version.** Under `package-json` it must be SemVer (`1.4.0`,
   `1.4.0-rc.1`); under `build-id`, MAJOR.MINOR must be two numbers. Anything else fails the step
   before a tag is made.
+- **Tag refused after a workflow change.** The tag step fails with
+  `! [remote rejected] v0.1.4 -> v0.1.4 (refusing to allow a GitHub App to create or update workflow
+  .github/workflows/<file> without workflows permission)`. GitHub refuses a new tag from the job's
+  `GITHUB_TOKEN` when the tagged commit's `.github/workflows` files match no branch tip. That
+  happens when the branch has moved past the commit and a later commit changed a workflow:
+  typically two merges in quick succession, the second (or the first, a Dependabot bump of a
+  pinned action) touching a workflow, with the first run still queued behind the concurrency group
+  when the second push lands. The run for the newest commit tags normally, because its workflow
+  files are the branch tip's.
+  - **What it costs:** the run goes red, and that commit gets no tag and no deploy. The next push's
+    release ships everything the refused one would have, so usually nothing is lost.
+  - **What to do:** usually nothing; check that a later run on the same branch tagged. Re-running
+    the failed job fails the same way while the branch tip's workflows differ. No `permissions:`
+    entry helps: a `GITHUB_TOKEN` cannot be given the workflows permission.
+  - **To release that exact commit anyway** (a rollback target, say): push the tag yourself, from
+    a clone, with credentials that can change workflows (`gh auth login` asks for the `workflow`
+    scope). The run's error names the exact commands. Its deploy does not run, since a tag pushed
+    by hand starts no workflow in these recipes; deploy it the way you deploy any existing tag.
+  - Releases after v1.2.8 name this cause in the run's error; older pins show only git's refusal.
 - **The Action tags; it does not deploy or publish.** The tag is the trigger; the deploy/`npm publish`
   is your step, keyed off the outputs.
 - **Pin to a commit SHA, with the release in a comment** —
