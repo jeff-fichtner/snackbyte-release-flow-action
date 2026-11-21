@@ -16,6 +16,8 @@
 #   I2  non-env push -> is-env=false, version/tag unset, NO tag created
 #   I3  env push with tag-prefix -> tag carries the prefix, version does not (feature 004)
 #   I4  mode=lookup on a promotion -> reports version/tag/released-as, tags nothing; tag agrees (006)
+#   I5  package-json, nothing to release -> lookup reports released-as = tag, tags nothing; tag
+#       mode still refuses (007)
 #   INV-1/SC-004: after an env push, exactly one new tag, zero new commits, unchanged branch head.
 set -uo pipefail
 
@@ -99,7 +101,7 @@ assert "wire: expect-tag default empty" "true" "$(jq_get expectInputDefault)"
 # invoke_action <workdir> <branch>  -> echoes "is-env|version|tag|released-as" after replaying both steps with
 # the real env mapping and the real gate. Uses the shipped scripts via their real paths.
 invoke_action() {
-  local wd="$1" branch="$2" manifest="${3:-./environments.json}" mm="${4:-}" prefix="${5:-}" mode="${6:-tag}"
+  local wd="$1" branch="$2" manifest="${3:-./environments.json}" mm="${4:-}" prefix="${5:-}" mode="${6:-tag}" strategy="${7:-build-id}"
   ( cd "$wd"
     local gho; gho="$(mktemp)"
     # Step 1 (resolve): env MANIFEST=<inputs.manifest>  (as action.yml maps it)
@@ -109,7 +111,7 @@ invoke_action() {
     # Step 2 (derive): the real gate — only if is-env == 'true'
     if [ "$is_env" = "true" ]; then
       local gho2; gho2="$(mktemp)"
-      if GITHUB_OUTPUT="$gho2" MANIFEST="$manifest" MAJOR_MINOR="$mm" TAG_PREFIX="$prefix" MODE="$mode" bash "$ROOT/scripts/derive-version.sh" "$branch" >/dev/null 2>&1; then
+      if GITHUB_OUTPUT="$gho2" MANIFEST="$manifest" MAJOR_MINOR="$mm" TAG_PREFIX="$prefix" MODE="$mode" VERSION_STRATEGY="$strategy" bash "$ROOT/scripts/derive-version.sh" "$branch" >/dev/null 2>&1; then
         version="$(sed -nE 's/^version=(.*)$/\1/p' "$gho2")"
         tag="$(sed -nE 's/^tag=(.*)$/\1/p' "$gho2")"
         released_as="$(sed -nE 's/^released-as=(.*)$/\1/p' "$gho2")"
@@ -201,6 +203,17 @@ assert "I4 lookup tags nothing" "$tags_before4" "$(git -C "$W4" tag | sort | tr 
 TAG4="$(invoke_action "$W4" main ./environments.json "" "" tag)"
 assert "I4 tag agrees"          "$LOOK4" "$TAG4"
 assert "I4 tag created"         "v0.1.3,v0.1.3-dev," "$(git -C "$W4" tag | sort | tr '\n' ',')"
+
+# I5 — nothing to release (feature 007): a library released v0.1.0, then a commit without a bump.
+#   The replayed look-up succeeds with released-as = the tag and creates nothing; the replayed tag
+#   step still refuses, so its outputs stay empty.
+W5="$(mk_repo)"
+invoke_action "$W5" main ./environments.json "" "" tag package-json >/dev/null
+( cd "$W5"; echo docs > docs.txt; git add docs.txt; git commit -q -m docs )
+tags_before5="$(git -C "$W5" tag | sort | tr '\n' ',')"
+assert "I5 lookup reports release" "true|0.1.0|v0.1.0|v0.1.0" "$(invoke_action "$W5" main ./environments.json "" "" lookup package-json)"
+assert "I5 lookup tags nothing"    "$tags_before5" "$(git -C "$W5" tag | sort | tr '\n' ',')"
+assert "I5 tag mode refuses"       "true|||" "$(invoke_action "$W5" main ./environments.json "" "" tag package-json)"
 
 echo ""
 echo "action.yml interface: PASS=${PASS} FAIL=${FAIL}"

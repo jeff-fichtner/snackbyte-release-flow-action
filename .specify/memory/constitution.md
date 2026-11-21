@@ -1,6 +1,20 @@
 <!--
 Sync Impact Report
 ==================
+Version change: 1.2.1 → 1.2.2 (2026-11-21, feature 007-nothing-to-release)
+Rationale: PATCH — the inputs/outputs summary records `released-as` under `package-json`: a
+look-up reports, instead of refusing, a version whose tag already sits on an earlier commit of the
+branch. No principle changes. V's exists-guard still holds: tag mode refuses that push, and a
+look-up creates nothing (I). A re-run of the release push and a tag on another line of history
+still fail loudly.
+
+Principles modified: none.
+
+Templates requiring updates: none.
+
+Follow-up TODOs: none.
+
+--- previous report (1.2.1) ---
 Version change: 1.2.0 → 1.2.1 (2026-11-11, feature 006-build-once-lookup)
 Rationale: PATCH — the Additional Constraints inputs/outputs summary catches up with the
 interface: inputs `mode` (`tag` default | `lookup`) and `expect-tag`, output `released-as`. No principle
@@ -221,7 +235,9 @@ is permitted but MUST be warned (their tags become indistinguishable).
 (default `""`), `mode` (`tag` default | `lookup`: derive and report, create nothing),
 `expect-tag` (refuse any other tag). Outputs:
 `is-env` (resolve-env result), `version` (`MM.P`, never prefixed), `tag` (`<prefix>vMM.P<suffix>`),
-`released-as` (an existing tag already carrying this number on this tree, or empty).
+`released-as` (an existing tag already carrying this number on this tree, or empty; under
+`package-json`, a look-up's report that the version's tag already sits on an earlier commit of the
+branch, so the push has nothing to release).
 
 ## Development Workflow
 
@@ -250,4 +266,4 @@ Versioning policy (semantic):
 Compliance: every plan's Constitution Check and every PR review MUST verify conformance to
 these principles. Any deviation MUST be justified in writing or the change MUST be revised.
 
-**Version**: 1.2.1 | **Ratified**: 2026-07-06 | **Last Amended**: 2026-11-11
+**Version**: 1.2.2 | **Ratified**: 2026-07-06 | **Last Amended**: 2026-11-21

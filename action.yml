@@ -54,7 +54,9 @@ inputs:
       'tag' (default) derives the version and creates and pushes the tag. 'lookup' runs the same
       derivation, every refusal included, and reports the outputs without creating anything; it
       needs no write permission. Look up first to learn whether this tree is already released
-      (released-as) before spending checks and a build, then tag at the end of the job.
+      (released-as) before spending checks and a build, then tag at the end of the job. Under
+      version-strategy package-json, a look-up whose tag already sits on an earlier commit of the
+      branch reports it (released-as) instead of refusing: the push has nothing to release.
     required: false
     default: "tag"
   expect-tag:
@@ -78,9 +80,10 @@ outputs:
   released-as:
     description: >-
       An existing tag that already carries this version's number on this exact tree (the first by
-      name), when the number is reused from an earlier release; empty when the number is new, and
-      always empty under version-strategy package-json. A promotion uses it to find the build its
-      upstream environment made.
+      name), when the number is reused from an earlier release; empty when the number is new. A
+      promotion uses it to find the build its upstream environment made. Under version-strategy
+      package-json it is set only by a lookup with nothing to release: the tag itself, already on an
+      earlier commit of the branch; skip the checks, the tag step and the publish.
     value: ${{ steps.derive.outputs.released-as }}
 
 runs:

@@ -24,7 +24,8 @@
 # after a duplicated build id, and PORT1 is its portability guard — see
 # specs/005-build-id-race/contracts/versioning.md. Rows L1-L12 are feature 006's look-up mode and
 # released-as output (L6b, L13-L14: blank mode, expect-tag) — see
-# specs/006-build-once-lookup/contracts/interface.md.
+# specs/006-build-once-lookup/contracts/interface.md. Rows NR1-NR10 are feature 007's nothing to
+# release under package-json — see specs/007-nothing-to-release/contracts/interface.md.
 set -uo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/derive-version.sh"
@@ -346,6 +347,76 @@ W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0
 # S7 — package-json still refuses an unknown branch (resolve-env is shared) -> FAIL
 W="$(fresh_repo)"; ( cd "$W"; git checkout -q -b feature-x; set_pkg 1.4.0
   assert S7 "FAIL" "$(derive feature-x VERSION_STRATEGY=package-json)" )
+
+# NR1-NR10 — nothing to release (feature 007): under package-json, a push whose version is already
+#   tagged on an EARLIER commit of the branch is reported by a look-up, not refused. Tag mode, a
+#   re-run of the release push, and a tag on another line of history still fail. See
+#   specs/007-nothing-to-release/contracts/interface.md.
+PJ="VERSION_STRATEGY=package-json"
+
+# NR1 — the reported case: v1.4.0 released (by the script itself), then a docs commit without a
+#   bump. The look-up succeeds with released-as = the tag, and creates nothing.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0
+  derive main "$PJ" >/dev/null; commit docs
+  before="$(tagset)"
+  out="$(derive_full main "$PJ" MODE=lookup)"
+  assert NR1 "1.4.0|v1.4.0|v1.4.0|${before}" "${out}|$(tagset)" )
+
+# NR2 — tag mode in the same state still refuses (nothing to tag), naming the cause and the way out.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0
+  derive main "$PJ" >/dev/null; commit docs
+  log="$(derive_log main "$PJ")"
+  case "$log" in *"already released on an earlier commit of main"*"mode: lookup"*) m=yes ;; *) m=no ;; esac
+  assert NR2 "FAIL|yes|v1.4.0," "$(derive main "$PJ")|${m}|$(tagset)" )
+
+# NR3 — a re-run of the release push itself (the tag is on HEAD) is still refused by the look-up.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0
+  derive main "$PJ" >/dev/null
+  assert NR3 "FAIL" "$(derive_full main "$PJ" MODE=lookup)" )
+
+# NR4 — a real collision: v1.4.0 exists on another line of history (a side branch), not on main.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0
+  git checkout -q -b side; commit side; git tag -a v1.4.0 -m x; git checkout -q main; commit docs
+  assert NR4 "FAIL" "$(derive_full main "$PJ" MODE=lookup)" )
+
+# NR5 — after a bump the look-up reports the new tag with an EMPTY released-as, so the job releases.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0
+  derive main "$PJ" >/dev/null; commit docs; set_pkg 1.5.0
+  assert NR5 "1.5.0|v1.5.0|" "$(derive_full main "$PJ" MODE=lookup)" )
+
+# NR6 — the notice: a look-up that finds nothing to release says so as a GitHub annotation.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0
+  derive main "$PJ" >/dev/null; commit docs
+  log="$(derive_log main "$PJ" MODE=lookup)"
+  case "$log" in *"::notice title=Nothing to release::v1.4.0 is already released on an earlier commit of main"*) n=yes ;; *) n=no ;; esac
+  assert NR6 "yes" "$n" )
+
+# NR7 — the channel's own tag decides: v1.4.0 (main's) on an earlier commit does not make channel
+#   A's v1.4.0-a released, so the look-up on aaa reports a fresh tag; once v1.4.0-a is on an
+#   earlier commit of aaa, the look-up reports it.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q -b aaa; set_pkg 1.4.0
+  git tag -a v1.4.0 -m x; commit docs
+  first="$(derive_full aaa "$PJ" MODE=lookup)"
+  git tag -a v1.4.0-a -m x; commit docs
+  assert NR7 "1.4.0|v1.4.0-a||1.4.0|v1.4.0-a|v1.4.0-a" "${first}|$(derive_full aaa "$PJ" MODE=lookup)" )
+
+# NR8 — prefixed namespace: released-as carries the prefix; the bare v1.4.0 does not count.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0
+  git tag -a v1.4.0 -m x; commit docs
+  first="$(derive_full main "$PJ" MODE=lookup TAG_PREFIX=lib-)"
+  git tag -a lib-v1.4.0 -m x; commit docs
+  assert NR8 "1.4.0|lib-v1.4.0||1.4.0|lib-v1.4.0|lib-v1.4.0" "${first}|$(derive_full main "$PJ" MODE=lookup TAG_PREFIX=lib-)" )
+
+# NR9 — a lightweight tag counts like an annotated one (the tag is resolved to its commit).
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main; set_pkg 1.4.0
+  git tag v1.4.0; commit docs
+  assert NR9 "1.4.0|v1.4.0|v1.4.0" "$(derive_full main "$PJ" MODE=lookup)" )
+
+# NR10 — build-id is unchanged: the target already on an earlier commit with this same tree (an
+#   empty commit after a release) is still refused by the look-up.
+W="$(fresh_repo)"; ( cd "$W"; git checkout -q main
+  derive main >/dev/null; git commit -q --allow-empty -m empty
+  assert NR10 "FAIL" "$(derive_full main MODE=lookup)" )
 
 # V1-V6 — a version that is not a version fails the run, and no tag is created.
 # V1 — package-json strategy, package.json without a version field.
