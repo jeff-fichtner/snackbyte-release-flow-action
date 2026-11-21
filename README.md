@@ -103,7 +103,7 @@ either way.
 | **For** | deployable apps | published libraries |
 | **Version comes from** | the tags: `MAJOR.MINOR` from `package.json`, the last number counted automatically | `package.json`'s `version`, exactly as written |
 | **`v1.4.7` means** | build 7 on the 1.4 line | you chose to release 1.4.7 |
-| **Releasing the same version twice** | cannot happen: a new build gets a new number | fails until you bump `package.json` |
+| **Releasing the same version twice** | cannot happen: a new build gets a new number | the tag step fails until you bump `package.json`; a look-up first reports "nothing to release" instead |
 
 Under `build-id`, the last number is a build id shared by every environment:
 
@@ -134,12 +134,14 @@ in the same repository (`tag-prefix`).
 | `is-env` | `"true"` if the branch is in the manifest, else `"false"`. |
 | `version` | The version, e.g. `1.4.7` (environment pushes only; never carries the prefix). |
 | `tag` | The tag that was pushed, e.g. `v1.4.7-dev` (environment pushes only; under `lookup`, the tag that would be pushed). |
-| `released-as` | An existing tag that already carries this number on this exact code, e.g. `v1.4.7-dev` when `main` is promoted from `dev`; empty when the number is new, and always empty under `package-json`. |
+| `released-as` | An existing tag that already carries this number on this exact code, e.g. `v1.4.7-dev` when `main` is promoted from `dev`; empty when the number is new. Under `package-json`, it is set only by a `lookup` when there is nothing to release: the version's tag already sits on an earlier commit of the branch, and `released-as` is that tag. |
 
 The full contract is in
 [`specs/001-extract-release-flow/contracts/action-io.md`](specs/001-extract-release-flow/contracts/action-io.md),
 with `mode`, `expect-tag` and `released-as` in
-[`specs/006-build-once-lookup/contracts/interface.md`](specs/006-build-once-lookup/contracts/interface.md).
+[`specs/006-build-once-lookup/contracts/interface.md`](specs/006-build-once-lookup/contracts/interface.md),
+and nothing to release in
+[`specs/007-nothing-to-release/contracts/interface.md`](specs/007-nothing-to-release/contracts/interface.md).
 
 ## What fails, and why
 
@@ -152,7 +154,12 @@ The Action stops rather than guess. Each of these fails the step and creates no 
 - an invalid `version-strategy`, `tag-prefix` or `mode`.
 
 A `lookup` run fails in the same cases, so a job that looks up first stops before it spends its
-checks. Pushing is the one thing it cannot try: a missing write permission or a tag rule on the
+checks. One case is reported instead: under `package-json`, a push that does not bump the version
+(docs, chores, Dependabot) finds the version's tag on an earlier commit of the branch. The look-up
+succeeds with `released-as` set to that tag and a notice, "Nothing to release", so a library's
+release job can skip its checks, the tag step and the publish, and stay green. The tag step itself
+still refuses that push, and a re-run of the release push or a tag on another line of history fails
+the look-up too. Pushing is the one thing it cannot try: a missing write permission or a tag rule on the
 remote still shows up only when the tag is pushed. With `expect-tag`, the tag step also fails if it
 would create a different tag than the look-up reported.
 

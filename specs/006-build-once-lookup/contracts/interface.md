@@ -33,7 +33,8 @@ The build-once recipe always passes it.
 - `build-id`, number reused from a tag on this tree → an existing `<prefix>vMM.N<suffix>` tag carrying
   that number on HEAD's tree, other than the one this run makes, the first by name.
 - `build-id`, number minted (max+1) → empty.
-- `package-json` → empty.
+- `package-json` → empty. (Feature 007 adds one case: a look-up with nothing to release; see
+  [its contract](../../007-nothing-to-release/contracts/interface.md).)
 
 ## Agreement
 

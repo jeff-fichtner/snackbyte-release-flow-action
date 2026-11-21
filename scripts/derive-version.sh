@@ -27,8 +27,9 @@
 # The branch is used only as DATA (its suffix, looked up in the manifest). There is no
 # per-environment code path: the same reuse-or-mint runs for every environment.
 #
-# Output: prints nothing to stdout except, when GITHUB_OUTPUT is set, writes `version=`, `tag=`
-# and `released-as=` for the workflow. The tag is created and pushed here; no commit, no branch
+# Output: prints nothing to stdout but GitHub annotations (a healed duplicate build id, nothing to
+# release) and, when GITHUB_OUTPUT is set, writes `version=`, `tag=` and `released-as=` for the
+# workflow. The tag is created and pushed here; no commit, no branch
 # push. `released-as` names an existing tag on this tree that already carries the chosen number
 # (empty when the number is minted), so a promotion can find the build staging made.
 #
@@ -42,6 +43,10 @@
 # create anything else, so a job that skipped its checks on the look-up's word can never tag a
 # different number: the two calls got different inputs, or a step between them changed the local
 # tags. Both read the tags the checkout fetched; the concurrency group keeps out remote changes.
+#
+# Nothing to release (feature 007, package-json only): when the target tag already sits on an
+# earlier commit of this branch, the push carries no new version. A look-up reports it (released-as
+# is the tag, plus a notice) and succeeds; tag mode still refuses, since there is nothing to tag.
 #
 # Parameterization (extracted from snackbyte-base; algorithm unchanged):
 #   $1 / $GITHUB_REF_NAME   the pushed branch
@@ -170,7 +175,7 @@ case "$VERSION_STRATEGY" in
     # The version IS whatever package.json declares — verbatim, prerelease and all. major-minor is a
     # build-id concept and is intentionally ignored here (documented in the I/O contract).
     version="$(pkg_read)"
-    released_as="" # no reuse under package-json, so no earlier release of this number to point at
+    released_as="" # no reuse under package-json; set below only when there is nothing to release
     # It must be SemVer (MAJOR.MINOR.PATCH, optional -prerelease and +build): an absent field
     # reads as `undefined`, and anything else would be tagged and published as a release.
     if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
@@ -292,10 +297,34 @@ if [ -n "$EXPECT_TAG" ] && [ "$EXPECT_TAG" != "$tag" ]; then
   exit 1
 fi
 
-# Never overwrite or silently reuse a tag. If the target already exists this is a re-run or a
-# race (or an attempt to re-tag an already-released number) — fail loudly so no tag is produced
-# and the deploy that depends on the tag is skipped rather than silently re-run.
-if git rev-parse "$tag" >/dev/null 2>&1; then
+# Nothing new to release (package-json only). A library releases when a maintainer bumps the
+# version, so most pushes to its release branch (docs, chores, dependency bumps) carry a version
+# that is already tagged. That state is recognisable from the tags alone: the target tag sits on
+# an EARLIER commit of this branch's history. Not on HEAD itself: that is a re-run of the release
+# push, which stays refused like every other existing target. Not on another line of history:
+# that is a real collision. build-id is untouched, because there every new tree mints a new number.
+already_released=""
+if [ "$VERSION_STRATEGY" = "package-json" ] \
+  && tag_commit="$(git rev-parse -q --verify "refs/tags/${tag}^{commit}" 2>/dev/null)" \
+  && [ "$tag_commit" != "$(git rev-parse HEAD)" ] \
+  && git merge-base --is-ancestor "$tag_commit" HEAD; then
+  already_released="yes"
+fi
+
+if [ -n "$already_released" ] && [ "$MODE" = "lookup" ]; then
+  # The look-up reports it and succeeds: released-as names the tag, which is the signal to skip
+  # the checks, the tag step and the publish. The notice goes to stdout, where GitHub reads it.
+  released_as="$tag"
+  printf '::notice title=Nothing to release::%s is already released on an earlier commit of %s; this push carries no new version.\n' \
+    "$tag" "$BRANCH"
+elif git rev-parse "$tag" >/dev/null 2>&1; then
+  # Never overwrite or silently reuse a tag. If the target already exists this is a re-run or a
+  # race (or an attempt to re-tag an already-released number) — fail loudly so no tag is produced
+  # and the deploy that depends on the tag is skipped rather than silently re-run.
+  if [ -n "$already_released" ]; then
+    echo "Tag ${tag} is already released on an earlier commit of ${BRANCH} — this push carries no new version. Bump the version in ${PACKAGE_JSON} to release, or look up first (mode: lookup) and skip the tag step when released-as is set." >&2
+    exit 1
+  fi
   echo "Tag ${tag} already exists — refusing to overwrite (re-run, race, or already released)." >&2
   exit 1
 fi

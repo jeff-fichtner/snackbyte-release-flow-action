@@ -834,8 +834,9 @@ a look-up reported — any other derived tag is refused; v1.2.7+).
 **Outputs**: `is-env` (`"true"`/`"false"` — gate your deploy/publish on this), `version` and `tag`
 (set only for a release-branch push; `tag` carries any `tag-prefix`, `version` never does; under
 `lookup` they are what the tag step would produce), `released-as` (an existing tag already carrying
-this number on this exact tree, e.g. `v1.4.7-dev` on a promotion; empty for new code and under
-`package-json`; v1.2.7+).
+this number on this exact tree, e.g. `v1.4.7-dev` on a promotion; empty for new code; v1.2.7+.
+Under `package-json`, set only by a `lookup` with nothing to release: the version's tag, already on
+an earlier commit of the branch).
 
 ## Gotchas
 

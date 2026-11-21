@@ -27,8 +27,8 @@ jobs:
           node-version: "24"
 
       # The bash acceptance suite: derivation matrix B1–B15 + extraction-delta P3–P5,
-      # resolve-env P1–P2, one-row-edit proof, the look-up rows L1–L14, and the action.yml
-      # interface replay (I1–I4).
+      # resolve-env P1–P2, one-row-edit proof, the look-up rows L1–L14, the
+      # nothing-to-release rows NR1–NR10, and the action.yml interface replay (I1–I5).
       - name: Run test:release
         run: npm run test:release
 
@@ -94,3 +94,31 @@ jobs:
           test "$TAG" = "v8.8.4"
           test "$RELEASED_AS" = "v8.8.4-dev"
           test "$(git tag -l 'v8.8.*')" = "v8.8.4-dev"
+
+      # Nothing to release (feature 007): a library whose version is already tagged on an earlier
+      # commit of the branch. A scratch package.json declares 7.7.7, and a local, unpushed v7.7.7 on
+      # HEAD's parent stands in for its release. The look-up must report it as released-as, succeed,
+      # and create nothing.
+      - name: Stand in for a library release on an earlier commit
+        run: |
+          printf '{"name":"scratch","version":"7.7.7","private":true}\n' > /tmp/pkg.json
+          git tag v7.7.7 HEAD~1
+      - id: nothing
+        uses: ./
+        with:
+          branch: main
+          manifest: /tmp/envs.json
+          package-json: /tmp/pkg.json
+          version-strategy: package-json
+          mode: lookup
+      - name: Assert the look-up reports nothing to release and tags nothing
+        env:
+          VERSION: ${{ steps.nothing.outputs.version }}
+          TAG: ${{ steps.nothing.outputs.tag }}
+          RELEASED_AS: ${{ steps.nothing.outputs.released-as }}
+        run: |
+          echo "version=$VERSION tag=$TAG released-as=$RELEASED_AS"
+          test "$VERSION" = "7.7.7"
+          test "$TAG" = "v7.7.7"
+          test "$RELEASED_AS" = "v7.7.7"
+          test "$(git tag -l 'v7.7.*')" = "v7.7.7"
